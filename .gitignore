@@ -1,0 +1,20 @@
+# Xcode & Swift Package Manager
+.DS_Store
+/.build
+/Packages
+xcuserdata/
+DerivedData/
+.swiftpm/xcode
+*.xcodeproj
+*.xcworkspace
+!default.sublime-project
+
+# Secrets & Local Environment
+.env
+.env.local
+*.key
+*.pem
+
+# Build artifacts
+*.dmg
+*.app
