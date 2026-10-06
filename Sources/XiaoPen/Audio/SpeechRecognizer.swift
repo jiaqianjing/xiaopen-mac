@@ -8,6 +8,7 @@ public final class SpeechRecognizer: @unchecked Sendable {
     private var recognizer: SFSpeechRecognizer?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
+    private var currentTaskID: UUID?
     
     public var onTranscriptUpdate: (@Sendable (String, Bool) -> Void)?
     
@@ -24,34 +25,54 @@ public final class SpeechRecognizer: @unchecked Sendable {
     }
     
     public func startRecognition() {
-        stopRecognition()
+        let taskID = UUID()
+        self.currentTaskID = taskID
+        
+        cleanupCurrentTask()
+        
+        guard let recognizer = recognizer, recognizer.isAvailable else {
+            print("[SpeechRecognizer] 识别引擎不可用")
+            return
+        }
         
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
         request.addsPunctuation = true
         
         self.recognitionRequest = request
-        self.recognitionTask = recognizer?.recognitionTask(with: request) { [weak self] result, error in
+        self.recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
             guard let self = self else { return }
+            
+            // 关键保护：忽略被取消的旧任务回调，避免新任务被误杀
+            guard self.currentTaskID == taskID else { return }
+            
             if let result = result {
                 let text = result.bestTranscription.formattedString
                 let isFinal = result.isFinal
                 self.onTranscriptUpdate?(text, isFinal)
             }
             if error != nil {
-                self.stopRecognition()
+                if self.currentTaskID == taskID {
+                    self.cleanupCurrentTask()
+                }
             }
         }
+        print("[SpeechRecognizer] 新一轮语音识别已启动 [\(taskID.uuidString.prefix(6))]")
     }
     
     public func appendAudioBuffer(_ buffer: AVAudioPCMBuffer) {
         recognitionRequest?.append(buffer)
     }
     
-    public func stopRecognition() {
+    private func cleanupCurrentTask() {
         recognitionRequest?.endAudio()
         recognitionRequest = nil
         recognitionTask?.cancel()
         recognitionTask = nil
+    }
+    
+    public func stopRecognition() {
+        currentTaskID = nil
+        cleanupCurrentTask()
     }
 }

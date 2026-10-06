@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import AVFoundation
+import AppKit
 
 public enum SpeakerState: String, Sendable {
     case idle = "待命"
@@ -59,9 +60,25 @@ public final class AppState {
                 if self.state == .idle {
                     // 处于待命状态时，检测唤醒词
                     let wakeWord = AppPreferences.shared.wakeWord
-                    WakeWordDetector.shared.processTranscript(transcript, targetWakeWord: wakeWord)
+                    let cleanText = transcript.replacingOccurrences(of: " ", with: "")
+                    
+                    if cleanText.contains(wakeWord) || cleanText.contains("小喷") {
+                        print("[AppState] 捕捉到唤醒词: \(transcript)")
+                        
+                        // 智能提取可能连着说的问题，例如“小喷小喷，今天星期几”
+                        var query = ""
+                        if let range = transcript.range(of: wakeWord) {
+                            query = String(transcript[range.upperBound...])
+                        } else if let range = transcript.range(of: "小喷") {
+                            query = String(transcript[range.upperBound...])
+                        }
+                        query = query.trimmingCharacters(in: CharacterSet(charactersIn: "，。？！,?! "))
+                        
+                        self.triggerWakeUp(initialQuery: query)
+                    }
                 } else if self.state == .listening {
                     self.currentTranscript = transcript
+                    self.resetSilenceTimer(timeout: 2.0)
                     if isFinal {
                         self.stopListeningAndProcess()
                     }
@@ -113,17 +130,26 @@ public final class AppState {
         }
     }
     
-    public func triggerWakeUp() {
+    public func triggerWakeUp(initialQuery: String = "") {
         interrupt()
         state = .listening
-        currentTranscript = ""
+        currentTranscript = initialQuery
         currentResponse = ""
         isHUDVisible = true
         dismissTimer?.invalidate()
         
-        // 播放提示音或轻微语音交互
+        // 播放系统轻快提示音（通过耳机听到清脆的 "叮"）
+        NSSound(named: "Tink")?.play()
+        
         SpeechRecognizer.shared.startRecognition()
-        resetSilenceTimer(timeout: 4.5)
+        
+        if !initialQuery.isEmpty {
+            // 用户一句话带出了问题，等待短暂停顿直接进入思考
+            resetSilenceTimer(timeout: 1.8)
+        } else {
+            // 纯唤醒词，给予充足时间等待用户说话
+            resetSilenceTimer(timeout: 6.0)
+        }
     }
     
     public func stopListeningAndProcess() {
