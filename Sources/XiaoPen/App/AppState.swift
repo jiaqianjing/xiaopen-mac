@@ -93,12 +93,23 @@ public final class AppState {
         }
     }
     
+    public var deviceStatus: String = "正在检测设备..."
+    
     public func startEngine() {
+        AudioEngineManager.shared.onStatusMessage = { [weak self] msg in
+            Task { @MainActor [weak self] in
+                self?.deviceStatus = msg
+            }
+        }
+        
         do {
             try AudioEngineManager.shared.start()
             SpeechRecognizer.shared.startRecognition()
+            errorMessage = nil
         } catch {
-            errorMessage = "麦克风启动失败: \(error.localizedDescription)"
+            errorMessage = error.localizedDescription
+            deviceStatus = error.localizedDescription
+            print("[AppState] startEngine 提示: \(error.localizedDescription)")
         }
     }
     

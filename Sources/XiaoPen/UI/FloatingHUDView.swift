@@ -55,6 +55,23 @@ public struct FloatingHUDView: View {
                 isSpeaking: appState.state == .speaking || appState.state == .listening
             )
             
+            // 硬件或错误提示 (如未接麦克风)
+            if let error = appState.errorMessage {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                        .imageScale(.small)
+                    Text(error)
+                        .font(.system(size: 11, weight: .regular))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.orange.opacity(0.12))
+                .cornerRadius(8)
+            }
+            
             // 用户转写文字
             if !appState.currentTranscript.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
