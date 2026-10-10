@@ -4,71 +4,60 @@ public final class OpenAIProvider: LLMProviderProtocol {
     private let baseURL: String
     private let apiKey: String
     private let model: String
-    
-    public init(baseURL: String, apiKey: String, model: String) {
-        self.baseURL = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    private let session: URLSession
+    private let options: OpenAIVendorOptions
+
+    public convenience init(baseURL: String, apiKey: String, model: String, session: URLSession = .shared,
+                            enableThinking: Bool? = nil) {
+        self.init(baseURL: baseURL, apiKey: apiKey, model: model, session: session,
+                  options: OpenAIVendorOptions(enableThinking: enableThinking))
+    }
+
+    public init(baseURL: String, apiKey: String, model: String, session: URLSession = .shared,
+                options: OpenAIVendorOptions) {
+        self.baseURL = baseURL
         self.apiKey = apiKey
         self.model = model
+        self.session = session
+        self.options = options
     }
-    
+
+    private func configuration() throws -> (url: URL, model: String, headers: [String: String]) {
+        var url = try LLMHTTPClient.baseURL(baseURL)
+        // An explicit path is already the API prefix (for example /v1beta/openai).
+        if url.path.isEmpty || url.path == "/" { url.appendPathComponent("v1") }
+        let model = try LLMHTTPClient.model(model)
+        // Self-hosted OpenAI-compatible endpoints may intentionally omit authentication.
+        let key = try LLMHTTPClient.apiKey(apiKey, required: url.host?.lowercased() == "api.openai.com")
+        return (url, model, key.isEmpty ? [:] : ["Authorization": "Bearer \(key)"])
+    }
+
     public func streamChat(messages: [ChatMessage], systemPrompt: String) async throws -> AsyncThrowingStream<String, Error> {
-        let endpoint = baseURL.hasSuffix("/v1") ? "\(baseURL)/chat/completions" : "\(baseURL)/v1/chat/completions"
-        guard let url = URL(string: endpoint) else {
-            throw URLError(.badURL)
-        }
-        
-        var allMessages: [ChatMessage] = []
-        if !systemPrompt.isEmpty {
-            allMessages.append(ChatMessage(role: "system", content: systemPrompt))
-        }
-        allMessages.append(contentsOf: messages)
-        
-        let payload: [String: Any] = [
-            "model": model,
-            "messages": allMessages.map { ["role": $0.role, "content": $0.content] },
-            "stream": true
-        ]
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if !apiKey.isEmpty {
-            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        }
-        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-        
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
-        guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
-        
-        return AsyncThrowingStream { continuation in
-            Task {
-                do {
-                    for try await line in bytes.lines {
-                        guard line.hasPrefix("data: ") else { continue }
-                        let jsonString = String(line.dropFirst(6)).trimmingCharacters(in: .whitespacesAndNewlines)
-                        if jsonString == "[DONE]" {
-                            break
-                        }
-                        guard !jsonString.isEmpty, let data = jsonString.data(using: .utf8) else { continue }
-                        
-                        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                           let choices = json["choices"] as? [[String: Any]],
-                           let delta = choices.first?["delta"] as? [String: Any],
-                           let content = delta["content"] as? String {
-                            continuation.yield(content)
-                        }
-                    }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-        }
+        let config = try configuration()
+        var allMessages = messages
+        if !systemPrompt.isEmpty { allMessages.insert(ChatMessage(role: "system", content: systemPrompt), at: 0) }
+        var payload: [String: Any] = ["model": config.model,
+            "messages": allMessages.map { ["role": $0.role, "content": $0.content] }, "stream": true]
+        // Leave optional vendor parameters absent for other OpenAI-compatible endpoints.
+        options.apply(to: &payload)
+        let request = try LLMHTTPClient.request(
+            url: config.url.appendingPathComponent("chat/completions"), method: "POST",
+            payload: payload,
+            headers: config.headers.merging(["Accept": "text/event-stream"]) { _, new in new }
+        )
+        return try await LLMHTTPClient.stream(for: request, session: session, format: .openAI)
     }
-    
+
     public func testConnection() async throws -> Bool {
-        return !baseURL.isEmpty
+        let config = try configuration()
+        let request = try LLMHTTPClient.request(url: config.url.appendingPathComponent("models"), headers: config.headers, timeout: 10)
+        let json = try await LLMHTTPClient.jsonResponse(for: request, session: session)
+        guard let models = json["data"] as? [[String: Any]] else {
+            throw LLMProviderError.invalidResponse("模型列表格式无效，请确认 Base URL 是 OpenAI 兼容接口。")
+        }
+        guard models.contains(where: { $0["id"] as? String == config.model }) else {
+            throw LLMProviderError.modelUnavailable(config.model)
+        }
+        return true
     }
 }
