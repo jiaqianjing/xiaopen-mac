@@ -16,5 +16,6 @@ DerivedData/
 *.pem
 
 # Build artifacts
+/build/
 *.dmg
 *.app
