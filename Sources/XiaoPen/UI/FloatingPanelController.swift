@@ -1,62 +1,68 @@
 import AppKit
 import SwiftUI
 
+/// A non-activating panel near the top-right corner. Its height follows the
+/// SwiftUI content while the top edge stays put; the user can drag it elsewhere.
 @MainActor
 public final class FloatingPanelController {
     public static let shared = FloatingPanelController()
-    
+
     private var panel: NSPanel?
-    
+    private var hasPosition = false
+
     private init() {}
-    
-    @MainActor
+
     public func setup() {
         guard panel == nil else { return }
-        
-        let contentView = FloatingHUDView()
-        let hostingView = NSHostingView(rootView: contentView)
-        
+        let hostingView = NSHostingView(rootView: FloatingHUDView())
         let newPanel = FloatingPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 380, height: 420),
+            contentRect: NSRect(x: 0, y: 0, width: HUDMetrics.width, height: 160),
             styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless],
             backing: .buffered,
             defer: false
         )
-        
         newPanel.level = .floating
         newPanel.isFloatingPanel = true
         newPanel.isOpaque = false
         newPanel.backgroundColor = .clear
-        newPanel.hasShadow = false
+        newPanel.hasShadow = true
+        newPanel.isMovableByWindowBackground = true
         newPanel.contentView = hostingView
         newPanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        
-        self.panel = newPanel
-        positionPanel()
+        panel = newPanel
     }
-    
-    @MainActor
+
     public func setVisible(_ visible: Bool) {
         setup()
-        guard let panel = panel else { return }
-        
+        guard let panel else { return }
         if visible {
-            positionPanel()
+            if !hasPosition || !isOnScreen(panel.frame) { placeTopRight() }
             panel.orderFrontRegardless()
         } else {
             panel.orderOut(nil)
         }
     }
-    
-    @MainActor
-    private func positionPanel() {
-        guard let panel = panel, let screen = NSScreen.main else { return }
-        let screenRect = screen.visibleFrame
-        
-        // 放置在屏幕右上方偏中位置 (类似通知中心或右上角灵动岛)
-        let x = screenRect.maxX - panel.frame.width - 24
-        let y = screenRect.maxY - panel.frame.height - 24
-        panel.setFrameOrigin(NSPoint(x: x, y: y))
+
+    /// Keeps the top edge fixed while the card grows or shrinks.
+    func updateHeight(_ height: CGFloat) {
+        guard let panel, height > 0, abs(panel.frame.height - height) > 0.5 else { return }
+        var frame = panel.frame
+        let top = frame.maxY
+        frame.size = NSSize(width: HUDMetrics.width, height: ceil(height))
+        frame.origin.y = top - frame.height
+        panel.setFrame(frame, display: true, animate: false)
+    }
+
+    private func placeTopRight() {
+        guard let panel, let screen = NSScreen.main else { return }
+        let visible = screen.visibleFrame
+        panel.setFrameOrigin(NSPoint(x: visible.maxX - panel.frame.width - 16,
+                                     y: visible.maxY - panel.frame.height - 12))
+        hasPosition = true
+    }
+
+    private func isOnScreen(_ frame: NSRect) -> Bool {
+        NSScreen.screens.contains { $0.visibleFrame.intersects(frame) }
     }
 }
 

@@ -4,109 +4,102 @@ import AppKit
 @main
 struct XiaoPenApp: App {
     @State private var appState = AppState.shared
+    @State private var reminders = ReminderStore.shared
+    @State private var updates = UpdateChecker.shared
     @NSApplicationDelegateAdaptor(XiaoPenAppDelegate.self) private var appDelegate
-    
+
     init() {
         Task { @MainActor in
             FloatingPanelController.shared.setup()
             GlobalHotKey.shared.action = { AppState.shared.toggleVoiceInteraction() }
             GlobalHotKey.shared.setEnabled(AppPreferences.shared.isGlobalHotKeyEnabled)
-            await AppState.shared.startEngine()
-        }
-    }
-    
-    var body: some Scene {
-        MenuBarExtra("小喷", systemImage: iconForState(appState.state)) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("小喷 Mac 智能音箱")
-                    .font(.headline)
-                
-                Text("状态: \(appState.statusText)")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-
-                Text(wakeWordStatus)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Text(appState.deviceStatus)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                if !appState.recognitionStatus.isEmpty {
-                    Text(appState.recognitionStatus).font(.caption).foregroundStyle(.secondary)
-                }
-
-                if !ReminderStore.shared.reminders.isEmpty {
-                    Text("待办提醒：\(ReminderStore.shared.reminders.count) 个 · 下一个 \(ReminderFormatter.spokenTime(ReminderStore.shared.reminders[0].fireDate, now: Date()))")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-
-                if let error = appState.errorMessage {
-                    Text(error).font(.caption).foregroundStyle(.orange)
-                }
-
-                if appState.speechBlockReason != nil {
-                    if appState.speechRecoveryAction != .retryRecognition {
-                        Button("打开系统听写设置") { appState.openDictationSettings() }
-                    }
-                }
-                Button("重新检测语音") { Task { await appState.startEngine() } }
-                    .disabled(appState.isPreparingAudio)
-                
-                Divider()
-                
-                Button(AppPreferences.shared.isGlobalHotKeyEnabled
-                       ? "唤醒小喷（全局 \(GlobalHotKey.displayName)）" : "唤醒小喷 (对讲模式)") {
-                    appState.triggerWakeUp()
-                }
-                .keyboardShortcut("k", modifiers: [.command, .shift])
-                .disabled(appState.isPreparingAudio || appState.speechBlockReason != nil)
-
-                if appState.state != .idle {
-                    Button("打断当前会话") { appState.interrupt() }
-                }
-                
-                Button(appState.isHUDVisible ? "隐藏悬浮窗口" : "显示悬浮窗口") {
-                    appState.isHUDVisible.toggle()
-                }
-
-                Button("清空本次对话记录") { appState.clearConversation() }
-                
-                Divider()
-                
-                SettingsLink {
-                    Text("偏好设置...")
-                }
-                .keyboardShortcut(",", modifiers: .command)
-                
-                Divider()
-                
-                Button("退出小喷") {
-                    NSApplication.shared.terminate(nil)
-                }
-                .keyboardShortcut("q", modifiers: .command)
+            UpdateChecker.shared.checkIfDue()
+            if AppPreferences.shared.hasCompletedOnboarding {
+                await AppState.shared.startEngine()
+            } else {
+                // Permissions are requested step by step inside the guide.
+                OnboardingWindowController.shared.show()
             }
         }
-        
+    }
+
+    var body: some Scene {
+        MenuBarExtra("小喷", systemImage: iconForState(appState.state)) {
+            Text(headerText)
+            if appState.speechBlockReason != nil || appState.errorMessage != nil {
+                Button("⚠︎ \(issueSummary)") { appState.isHUDVisible = true }
+            }
+            Divider()
+
+            if appState.state == .idle {
+                Button("开始说话") { appState.triggerWakeUp() }
+                    .keyboardShortcut("k", modifiers: [.command, .shift])
+                    .disabled(appState.isPreparingAudio || appState.speechBlockReason != nil)
+            } else {
+                Button("停止") { appState.interrupt() }
+                    .keyboardShortcut("k", modifiers: [.command, .shift])
+            }
+            Button(appState.isHUDVisible ? "收起对话浮窗" : "显示对话浮窗") {
+                appState.isHUDVisible.toggle()
+            }
+
+            if !reminders.reminders.isEmpty {
+                Divider()
+                Menu("提醒（\(reminders.reminders.count)）") {
+                    ForEach(reminders.reminders) { reminder in
+                        Button("取消：\(ReminderFormatter.spokenTime(reminder.fireDate, now: Date())) · \(ReminderFormatter.announcementTitle(for: reminder))") {
+                            appState.removeReminder(reminder)
+                        }
+                    }
+                    Divider()
+                    Button("全部取消") { _ = ReminderStore.shared.removeAll() }
+                }
+            }
+
+            Divider()
+            SettingsLink { Text("设置…") }
+                .keyboardShortcut(",", modifiers: .command)
+            if let release = updates.available {
+                Button("下载新版本 \(release.version)…") { NSWorkspace.shared.open(release.url) }
+            }
+            Divider()
+            Button("退出小喷") { NSApplication.shared.terminate(nil) }
+                .keyboardShortcut("q", modifiers: .command)
+        }
+
         Settings {
             SettingsView()
         }
     }
-    
-    private func iconForState(_ state: SpeakerState) -> String {
-        switch state {
-        case .idle: return "sparkles"
-        case .listening: return "waveform.circle.fill"
-        case .thinking: return "brain.head.profile"
-        case .speaking: return "speaker.wave.2.bubble.left.fill"
+
+    private var headerText: String {
+        let prefs = AppPreferences.shared
+        switch appState.state {
+        case .idle:
+            if !appState.hasPermissions { return "小喷 · 等待授权" }
+            if prefs.isWakeWordEnabled, WakeWordDetector.isValid(prefs.wakeWord) {
+                return "小喷 · 说“\(prefs.wakeWord)”或按 \(GlobalHotKey.displayName)"
+            }
+            return "小喷 · 按 \(GlobalHotKey.displayName) 开始说话"
+        case .listening: return "小喷 · 正在听"
+        case .thinking: return "小喷 · 正在想"
+        case .speaking: return "小喷 · 正在说"
         }
     }
-    
-    private var wakeWordStatus: String {
-        let prefs = AppPreferences.shared
-        guard prefs.isWakeWordEnabled else { return "语音唤醒已关闭 · 可手动唤醒" }
-        guard WakeWordDetector.isValid(prefs.wakeWord) else { return "请在设置中填写有效唤醒词" }
-        return "唤醒词：\(prefs.wakeWord)"
+
+    private var issueSummary: String {
+        let message = appState.speechBlockReason ?? appState.errorMessage ?? ""
+        return message.count > 28 ? String(message.prefix(28)) + "…" : message
+    }
+
+    private func iconForState(_ state: SpeakerState) -> String {
+        if appState.speechBlockReason != nil { return "exclamationmark.bubble" }
+        switch state {
+        case .idle: return "bubble.left.and.text.bubble.right"
+        case .listening: return "waveform"
+        case .thinking: return "ellipsis.bubble"
+        case .speaking: return "speaker.wave.2.bubble.left"
+        }
     }
 }
 

@@ -154,6 +154,9 @@ public final class AppPreferences: @unchecked Sendable {
     public var showsStandbyTranscript: Bool {
         didSet { defaults.set(showsStandbyTranscript, forKey: "showsStandbyTranscript") }
     }
+    public var hasCompletedOnboarding: Bool {
+        didSet { defaults.set(hasCompletedOnboarding, forKey: "hasCompletedOnboarding") }
+    }
     public var isGlobalHotKeyEnabled: Bool {
         didSet { defaults.set(isGlobalHotKeyEnabled, forKey: "isGlobalHotKeyEnabled") }
     }
@@ -226,6 +229,9 @@ public final class AppPreferences: @unchecked Sendable {
         self.followUpSeconds = defaults.double(forKey: "followUpSeconds") == 0 ? 6 : defaults.double(forKey: "followUpSeconds")
         self.showsStandbyTranscript = defaults.object(forKey: "showsStandbyTranscript") as? Bool ?? false
         self.isGlobalHotKeyEnabled = defaults.object(forKey: "isGlobalHotKeyEnabled") as? Bool ?? true
+        // People who already configured a model skip the first-run guide.
+        self.hasCompletedOnboarding = defaults.object(forKey: "hasCompletedOnboarding") as? Bool
+            ?? (defaults.string(forKey: "providerType") != nil)
         
         self.wakeWord = defaults.string(forKey: "wakeWord") ?? "小喷小喷"
         self.isWakeWordEnabled = defaults.object(forKey: "isWakeWordEnabled") as? Bool ?? true

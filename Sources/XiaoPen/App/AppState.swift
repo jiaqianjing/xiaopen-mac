@@ -33,6 +33,9 @@ public final class AppState {
     public private(set) var isFollowUpListening = false
     /// The reminder being announced, so the HUD can offer snooze and dismiss.
     public private(set) var activeReminder: Reminder?
+    /// Counts voice wake-ups; the first-run guide uses it to confirm the wake word works.
+    public private(set) var voiceWakeCount = 0
+    public var hasPermissions: Bool { permissionsGranted }
     public var statusText: String {
         if state == .listening, isFinalizingSpeech { return "正在整理语音..." }
         if state == .listening, isFollowUpListening, currentTranscript.isEmpty { return "还在听 · 可以接着说" }
@@ -384,6 +387,7 @@ public final class AppState {
         currentResponse = ""
         isHUDVisible = true
         standbyRotationTask?.cancel()
+        voiceWakeCount += 1
         let sessionSeconds = recognitionStartedAt.map { ProcessInfo.processInfo.systemUptime - $0 } ?? -1
         logger.notice("自定义唤醒词匹配成功 · 保留当前识别会话：sessionSeconds=\(sessionSeconds), transcriptLength=\(transcript.count)")
         NSSound(named: "Tink")?.play()
