@@ -1,7 +1,8 @@
 import AppKit
 import SwiftUI
 
-public final class FloatingPanelController: @unchecked Sendable {
+@MainActor
+public final class FloatingPanelController {
     public static let shared = FloatingPanelController()
     
     private var panel: NSPanel?
@@ -15,8 +16,8 @@ public final class FloatingPanelController: @unchecked Sendable {
         let contentView = FloatingHUDView()
         let hostingView = NSHostingView(rootView: contentView)
         
-        let newPanel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 360, height: 240),
+        let newPanel = FloatingPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 380, height: 420),
             styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless],
             backing: .buffered,
             defer: false
@@ -53,8 +54,13 @@ public final class FloatingPanelController: @unchecked Sendable {
         let screenRect = screen.visibleFrame
         
         // 放置在屏幕右上方偏中位置 (类似通知中心或右上角灵动岛)
-        let x = screenRect.maxX - 380 - 24
-        let y = screenRect.maxY - 280 - 24
+        let x = screenRect.maxX - panel.frame.width - 24
+        let y = screenRect.maxY - panel.frame.height - 24
         panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
+}
+
+private final class FloatingPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
 }

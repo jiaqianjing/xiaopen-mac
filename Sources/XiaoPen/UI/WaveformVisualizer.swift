@@ -4,20 +4,18 @@ public struct WaveformVisualizer: View {
     public let level: Float
     public let isSpeaking: Bool
     
-    @State private var phase: Double = 0.0
-    
     public init(level: Float, isSpeaking: Bool) {
         self.level = level
         self.isSpeaking = isSpeaking
     }
     
     public var body: some View {
-        TimelineView(.animation) { timeline in
+        TimelineView(.animation(paused: level <= 0 && !isSpeaking)) { timeline in
             Canvas { context, size in
                 let width = size.width
                 let height = size.height
                 let midY = height / 2.0
-                let currentLevel = CGFloat(max(level, 0.05))
+                let currentLevel = CGFloat(isSpeaking ? max(level, 0.25) : max(level, 0))
                 
                 let time = timeline.date.timeIntervalSinceReferenceDate
                 let dynamicPhase = time * (isSpeaking ? 5.0 : 3.0)
