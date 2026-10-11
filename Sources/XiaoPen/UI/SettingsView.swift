@@ -14,6 +14,9 @@ public struct SettingsView: View {
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
     @State private var launchAtLoginError: String?
     @State private var isModelInstalled = LocalSpeechWorker.isModelInstalled
+    @State private var cloudKeyMissing = false
+    @State private var cloudTestResult: String?
+    @State private var isTestingCloud = false
 
     public init() {}
 
@@ -36,6 +39,15 @@ public struct SettingsView: View {
             appState.refreshWakeSettings()
         }
         .onChange(of: prefs.isGlobalHotKeyEnabled) { _, enabled in GlobalHotKey.shared.setEnabled(enabled) }
+        .onChange(of: prefs.speechRecognitionMode) { _, _ in appState.refreshWakeSettings() }
+        .task(id: prefs.speechRecognitionMode) {
+            guard prefs.speechRecognitionMode == .cloud, let account = prefs.cloudASRKeyAccount else {
+                cloudKeyMissing = false
+                return
+            }
+            let key = (try? await prefs.readAPIKey(account: account)) ?? ""
+            cloudKeyMissing = key.isEmpty
+        }
         .onChange(of: prefs.usesAutomaticLocation) { _, enabled in if enabled { location.refresh() } }
         .onChange(of: installer.phase) { _, phase in
             if phase == .installed {
@@ -90,6 +102,42 @@ public struct SettingsView: View {
                     }
                 }
             }
+            Section("识别你说的问题") {
+                Picker("识别方式", selection: $prefs.speechRecognitionMode) {
+                    Text("云端识别（千问，更准）").tag(SpeechRecognitionMode.cloud)
+                    Text("本机识别（离线）").tag(SpeechRecognitionMode.local)
+                }
+                .pickerStyle(.radioGroup)
+                if prefs.speechRecognitionMode == .cloud {
+                    HStack {
+                        TextField("识别模型", text: $prefs.cloudASRModel)
+                        Menu("常用") {
+                            ForEach(AppPreferences.cloudASRModels, id: \.self) { model in
+                                Button(model) { prefs.cloudASRModel = model }
+                            }
+                        }
+                        .fixedSize()
+                    }
+                    if cloudKeyMissing {
+                        Label("需要先在“大脑”里选择千问 AI 平台并填写 API Key；没有密钥时会自动用本机识别。",
+                              systemImage: "key")
+                            .font(.footnote).foregroundStyle(.orange)
+                    }
+                    HStack {
+                        Button("测试云端识别") { testCloudRecognition() }
+                            .disabled(isTestingCloud)
+                        if isTestingCloud { ProgressView().controlSize(.small) }
+                        if let cloudTestResult {
+                            Text(cloudTestResult).font(.footnote).textSelection(.enabled)
+                        }
+                    }
+                    Text("唤醒词始终在本机识别。叫醒小喷后，从唤醒前约 2.5 秒开始的录音会实时发送到千问 AI 平台识别，直到你说完；按识别时长计费，以平台价格为准。网络或密钥有问题时自动改用本机识别。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                } else {
+                    Text("全部在这台 Mac 上识别，不上传录音；离麦克风较远或有噪音时准确率较低。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
             Section("对话浮窗") {
                 Slider(value: $prefs.autoDismissSeconds, in: 2...10, step: 0.5) {
                     Text("回答后保留 \(String(format: "%.1f", prefs.autoDismissSeconds)) 秒")
@@ -103,7 +151,7 @@ public struct SettingsView: View {
                 if !appState.recognitionStatus.isEmpty {
                     Text(appState.recognitionStatus).font(.footnote).foregroundStyle(.secondary)
                 }
-                Text("语音识别完全在本机进行，需要在系统“键盘 → 听写”中开启普通话（中国大陆）。")
+                Text("唤醒词由本机识别，需要在系统“键盘 → 听写”中开启普通话（中国大陆）。")
                     .font(.footnote).foregroundStyle(.secondary)
                 HStack {
                     Button("重新检测") { Task { await appState.startEngine() } }
@@ -317,6 +365,26 @@ public struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    private func testCloudRecognition() {
+        guard let account = prefs.cloudASRKeyAccount else { return }
+        isTestingCloud = true
+        cloudTestResult = nil
+        Task {
+            defer { isTestingCloud = false }
+            let key = (try? await prefs.readAPIKey(account: account)) ?? ""
+            guard !key.isEmpty else {
+                cloudTestResult = "没有千问 AI 平台的 API Key"
+                return
+            }
+            switch await CloudSpeechSelfTest.run(apiKey: key, model: prefs.cloudASRModel) {
+            case .success(let text):
+                cloudTestResult = text.isEmpty ? "连接成功，但没有识别出文字" : "说“\(CloudSpeechSelfTest.phrase)”，识别为“\(text)”"
+            case .failure(let error):
+                cloudTestResult = error.localizedDescription
+            }
+        }
     }
 
     private func openPrivacy(_ pane: String) {

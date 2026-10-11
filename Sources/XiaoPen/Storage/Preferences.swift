@@ -17,6 +17,14 @@ public enum LLMProviderType: String, CaseIterable, Identifiable, Codable, Sendab
     }
 }
 
+/// Who transcribes the question after a local wake-up.
+public enum SpeechRecognitionMode: String, CaseIterable, Identifiable, Codable, Sendable {
+    case cloud
+    case local
+
+    public var id: String { rawValue }
+}
+
 public enum TTSEngineType: String, CaseIterable, Identifiable, Codable, Sendable {
     case system = "system"
     case localQwen = "local_qwen"
@@ -173,6 +181,17 @@ public final class AppPreferences: @unchecked Sendable {
     public var showsStandbyTranscript: Bool {
         didSet { defaults.set(showsStandbyTranscript, forKey: "showsStandbyTranscript") }
     }
+    /// The wake word is always recognized on this Mac; this chooses who transcribes the question.
+    public var speechRecognitionMode: SpeechRecognitionMode {
+        didSet { defaults.set(speechRecognitionMode.rawValue, forKey: "speechRecognitionMode") }
+    }
+    public var cloudASRModel: String {
+        didSet { defaults.set(cloudASRModel, forKey: "cloudASRModel") }
+    }
+    public static let cloudASRModels = ["fun-asr-realtime", "qwen-audio-3.1-asr-flash-streaming"]
+    /// Cloud recognition runs on Qianwen and uses that platform's key, whichever brain is active.
+    public var cloudASRKeyAccount: String? { apiKeyAccount(forProviderID: "qianwen") }
+
     /// Until this time, recognized text is written to the log to diagnose wake and
     /// recognition problems. Off by default and always time-limited.
     public var transcriptDiagnosticsUntil: Date? {
@@ -268,6 +287,8 @@ public final class AppPreferences: @unchecked Sendable {
         self.showsStandbyTranscript = defaults.object(forKey: "showsStandbyTranscript") as? Bool ?? false
         self.isGlobalHotKeyEnabled = defaults.object(forKey: "isGlobalHotKeyEnabled") as? Bool ?? true
         self.transcriptDiagnosticsUntil = defaults.object(forKey: "transcriptDiagnosticsUntil") as? Date
+        self.speechRecognitionMode = SpeechRecognitionMode(rawValue: defaults.string(forKey: "speechRecognitionMode") ?? "") ?? .cloud
+        self.cloudASRModel = defaults.string(forKey: "cloudASRModel") ?? Self.cloudASRModels[0]
         // People who already configured a model skip the first-run guide.
         self.hasCompletedOnboarding = defaults.object(forKey: "hasCompletedOnboarding") as? Bool
             ?? (defaults.string(forKey: "providerType") != nil)
