@@ -223,22 +223,39 @@ public final class ChatGPTAuth {
             let (data, response) = try await URLSession.shared.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-            guard status == 200, let entries = json?["data"] as? [[String: Any]] else {
+            guard status == 200, let json, let ids = Self.modelIDs(in: json) else {
                 let detail = (json?["error"] as? [String: Any]).map { "\($0["code"] as? String ?? "") \($0["message"] as? String ?? "")" }
                     ?? String(decoding: data.prefix(200), as: UTF8.self)
                 logger.error("ChatGPT 模型列表读取失败：status=\(status), detail=\(detail, privacy: .public)")
                 modelsError = "读取模型列表失败（HTTP \(status)）\(detail.isEmpty ? "" : "：\(detail)")"
                 return
             }
-            let listed = entries.filter { ($0["visibility"] as? String ?? "list") == "list" }.compactMap { $0["id"] as? String }
-            // Prefer the documented filter, but never hide every model.
-            models = listed.isEmpty ? entries.compactMap { $0["id"] as? String } : listed
+            models = ids
             modelsError = models.isEmpty ? "账号下没有可用的模型。" : nil
             logger.notice("ChatGPT 模型列表：count=\(self.models.count), models=\(self.models.prefix(12).joined(separator: ","), privacy: .public)")
         } catch {
             logger.error("ChatGPT 模型列表请求失败：\(error.localizedDescription, privacy: .public)")
             modelsError = "读取模型列表失败：\(error.localizedDescription)"
         }
+    }
+
+    /// Model IDs from either list shape: the API's `{"data":[{"id"}]}` or the plan
+    /// catalog's `{"models":[{"slug"}]}`. Entries marked hidden are skipped unless
+    /// that would hide every model.
+    nonisolated static func modelIDs(in json: [String: Any]) -> [String]? {
+        let entries: [[String: Any]]
+        let idKey: String
+        if let data = json["data"] as? [[String: Any]] {
+            (entries, idKey) = (data, "id")
+        } else if let models = json["models"] as? [[String: Any]] {
+            (entries, idKey) = (models, "slug")
+        } else {
+            return nil
+        }
+        let all = entries.compactMap { ($0[idKey] as? String) ?? ($0["id"] as? String) }
+        let listed = entries.filter { ($0["visibility"] as? String ?? "list") == "list" }
+            .compactMap { ($0[idKey] as? String) ?? ($0["id"] as? String) }
+        return listed.isEmpty ? all : listed
     }
 
     private func save(_ credentials: Credentials) throws {

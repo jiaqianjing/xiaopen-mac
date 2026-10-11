@@ -49,10 +49,10 @@ public final class ChatGPTResponsesProvider: LLMProviderProtocol {
 
     public func testConnection() async throws -> Bool {
         let json = try await LLMHTTPClient.jsonResponse(for: try await request("models", payload: nil), session: session)
-        guard let models = json["data"] as? [[String: Any]] else {
+        guard let models = ChatGPTAuth.modelIDs(in: json) else {
             throw LLMProviderError.invalidResponse("模型列表格式无效。")
         }
-        guard models.contains(where: { $0["id"] as? String == model }) else {
+        guard models.contains(model) else {
             throw LLMProviderError.modelUnavailable(model)
         }
         return true
