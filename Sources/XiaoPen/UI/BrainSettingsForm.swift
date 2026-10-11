@@ -6,6 +6,7 @@ import AppKit
 @MainActor
 struct BrainSettingsForm<Footer: View>: View {
     @Bindable private var prefs = AppPreferences.shared
+    private let chatGPT = ChatGPTAuth.shared
     /// Keyed by keychain account: each platform has its own key.
     @State private var keyInputs: [String: String] = [:]
     @State private var editedKeys: Set<String> = []
@@ -55,6 +56,9 @@ struct BrainSettingsForm<Footer: View>: View {
                 Text("每个入口的地址、模型和密钥分别保存，切换后不会丢失。")
                     .font(.footnote).foregroundStyle(.secondary)
             }
+            if prefs.providerType == .chatGPT {
+                chatGPTSection
+            } else {
             Section("\(preset.name) 配置") {
                 if preset.protocols.count > 1 {
                     Picker("接口协议", selection: protocolSelection) {
@@ -88,6 +92,7 @@ struct BrainSettingsForm<Footer: View>: View {
                     Text("语音对话建议选 flash、highspeed 等快速模型。模型列表常有变化，以平台控制台为准。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
+            }
             }
             if prefs.supportsWebSearch {
                 Section("联网搜索") {
@@ -139,11 +144,55 @@ struct BrainSettingsForm<Footer: View>: View {
         }
     }
 
+    @ViewBuilder
+    private var chatGPTSection: some View {
+        Section("ChatGPT 账号") {
+            switch chatGPT.status {
+            case .signedIn(let email):
+                LabeledContent("已登录", value: email ?? "ChatGPT 账号")
+                HStack {
+                    Picker("模型", selection: $prefs.model) {
+                        if !chatGPT.models.contains(prefs.model) { Text(prefs.model.isEmpty ? "请选择" : prefs.model).tag(prefs.model) }
+                        ForEach(chatGPT.models, id: \.self) { Text($0).tag($0) }
+                    }
+                    Button("刷新") { Task { await chatGPT.loadModels() } }
+                }
+                Button("退出登录") { chatGPT.signOut() }
+            case .signingIn:
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text("请在浏览器中完成登录…")
+                    Spacer()
+                    Button("取消") { chatGPT.cancelSignIn() }
+                }
+            case .signedOut, .failed:
+                if case .failed(let message) = chatGPT.status {
+                    Text(message).font(.footnote).foregroundStyle(.red)
+                }
+                Button("用 ChatGPT 登录") { chatGPT.signIn() }
+                    .buttonStyle(.borderedProminent)
+            }
+            Text("用浏览器登录 ChatGPT 并同意授权后，小喷的回答会消耗你的 ChatGPT 订阅额度，不需要 API Key；小喷看不到你的 ChatGPT 聊天记录。令牌保存在 macOS 钥匙串，可以随时退出登录或在 ChatGPT 设置中断开。语音识别仍使用千问。国内网络需要能访问 openai.com。")
+                .font(.footnote).foregroundStyle(.secondary)
+        }
+        .task {
+            await chatGPT.restore()
+            if case .signedIn = chatGPT.status, chatGPT.models.isEmpty { await chatGPT.loadModels() }
+        }
+        .onChange(of: chatGPT.models) { _, models in
+            // Pick a fast default once the account's models are known.
+            if !models.contains(prefs.model), let first = models.first(where: { $0.contains("mini") }) ?? models.first {
+                prefs.model = first
+            }
+        }
+    }
+
     private var baseURLLabel: String {
         switch prefs.providerType {
         case .openAI: return "接口地址（OpenAI 兼容）"
         case .anthropic: return "接口地址（Anthropic 兼容）"
         case .ollama: return "Ollama 地址"
+        case .chatGPT: return "接口地址"
         }
     }
 
@@ -252,7 +301,8 @@ struct BrainSettingsForm<Footer: View>: View {
         let account = currentAccount
         let key = (account.flatMap { keyInputs[$0] } ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let provider = LLMProviderFactory.make(protocolType: prefs.providerType, baseURL: prefs.baseURL,
-                                               model: prefs.model, apiKey: key, options: prefs.requestOptions)
+                                               model: prefs.model, apiKey: key, options: prefs.requestOptions,
+                                               thinkingEnabled: prefs.thinkingEnabled)
         isTestingConnection = true
         testResult = nil
         connectionTask = Task { @MainActor in

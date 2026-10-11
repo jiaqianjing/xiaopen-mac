@@ -79,6 +79,11 @@ public enum ProviderCatalog {
             consoleURL: URL(string: "https://openrouter.ai/settings/keys"), requiresKey: true,
             note: "一个密钥可用多家海外模型，模型名写成“厂商/模型”。国内网络可能需要代理。"),
         ProviderPreset(
+            id: "chatgpt", name: "ChatGPT 订阅", group: .vendor,
+            endpoints: [(.chatGPT, "https://api.openai.com/v1")],
+            suggestedModels: [], consoleURL: URL(string: "https://chatgpt.com/#settings"), requiresKey: false,
+            note: "用 ChatGPT 账号登录后，回答消耗你的 ChatGPT 订阅额度，不需要 API Key。国内网络需要代理。"),
+        ProviderPreset(
             id: "anthropic", name: "Anthropic Claude", group: .vendor,
             endpoints: [(.anthropic, "https://api.anthropic.com")],
             suggestedModels: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],

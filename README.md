@@ -7,6 +7,7 @@
 ## 能做什么
 
 - **聊天问答**：内置千问 AI 平台、DeepSeek、Kimi、MiniMax、智谱 GLM、火山方舟（豆包）、OpenRouter、Anthropic Claude，也可以接任何 OpenAI 兼容或 Anthropic 兼容接口，以及本机 Ollama。默认关闭深度思考，回答更快。
+- **ChatGPT 订阅**：用 ChatGPT 账号登录，直接使用你的 ChatGPT 订阅额度回答，不需要 API Key（需要能访问 openai.com）。
 - **联网搜索**：使用千问 AI 平台时可开启，问新闻、比赛、行情等最新信息也能答。
 - **天气**：“明天会下雨吗？”“北京后天冷不冷？” 自动定位所在城市，数据来自 Open-Meteo。
 - **提醒和计时**：“十分钟后提醒我关火”“明天早上八点叫我起床”“我有哪些提醒”。在本机执行，重启后不丢。

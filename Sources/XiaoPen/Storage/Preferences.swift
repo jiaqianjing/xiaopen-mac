@@ -5,6 +5,8 @@ public enum LLMProviderType: String, CaseIterable, Identifiable, Codable, Sendab
     case ollama = "ollama"
     case anthropic = "anthropic"
     case openAI = "openai"
+    /// OpenAI Responses API billed to a ChatGPT plan via Sign in with ChatGPT.
+    case chatGPT = "chatgpt"
     
     public var id: String { rawValue }
     
@@ -13,6 +15,7 @@ public enum LLMProviderType: String, CaseIterable, Identifiable, Codable, Sendab
         case .ollama: return "Ollama"
         case .anthropic: return "Anthropic 协议"
         case .openAI: return "OpenAI 协议"
+        case .chatGPT: return "ChatGPT 订阅"
         }
     }
 }
@@ -141,7 +144,9 @@ public final class AppPreferences: @unchecked Sendable {
             model: model, thinkingEnabled: thinkingEnabled, webSearch: isWebSearchEnabled)
     }
 
-    public var supportsThinkingControl: Bool { requestOptions.supportsThinkingToggle }
+    public var supportsThinkingControl: Bool {
+        providerType == .chatGPT || requestOptions.supportsThinkingToggle
+    }
 
     public var thinkingOption: Bool? {
         let options = requestOptions
@@ -305,7 +310,8 @@ public final class AppPreferences: @unchecked Sendable {
     // MARK: - Keychain Accessors
     /// Keychain account for an entry; every provider keeps its own key.
     public func apiKeyAccount(forProviderID id: String) -> String? {
-        guard let preset = ProviderCatalog.preset(id: id), preset.group != .local else { return nil }
+        guard let preset = ProviderCatalog.preset(id: id), preset.group != .local,
+              !preset.protocols.contains(.chatGPT) else { return nil }
         if id == "anthropic" { return "anthropic_api_key" }
         return id == legacyKeyProviderID ? "openai_api_key" : "\(id)_api_key"
     }

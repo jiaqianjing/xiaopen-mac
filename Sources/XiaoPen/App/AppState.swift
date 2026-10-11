@@ -536,6 +536,7 @@ public final class AppState {
         let prefs = AppPreferences.shared
         let selectedProvider = prefs.providerType
         let requestOptions = prefs.requestOptions
+        let thinkingEnabled = prefs.thinkingEnabled
         let keyAccount = prefs.currentKeyAccount
         let baseURL = prefs.baseURL
         let model = prefs.model
@@ -573,7 +574,8 @@ public final class AppState {
                     role: "user", content: AssistantContext.decorate(userText, now: Date(), city: city, extra: [extra])
                 )
                 let provider = LLMProviderFactory.make(protocolType: selectedProvider, baseURL: baseURL,
-                                                       model: model, apiKey: apiKey, options: requestOptions)
+                                                       model: model, apiKey: apiKey, options: requestOptions,
+                                                       thinkingEnabled: thinkingEnabled)
                 self.logger.notice("模型请求开始：provider=\(selectedProvider.rawValue, privacy: .public), model=\(model, privacy: .public)")
                 let requestStartedAt = ProcessInfo.processInfo.systemUptime
                 let stream = try await provider.streamChat(messages: requestMessages, systemPrompt: systemPrompt)

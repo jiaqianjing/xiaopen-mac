@@ -92,8 +92,13 @@ public final class AnthropicProvider: LLMProviderProtocol {
 /// Builds the request client for a protocol; the single place that maps settings to a provider.
 enum LLMProviderFactory {
     static func make(protocolType: LLMProviderType, baseURL: String, model: String, apiKey: String,
-                     options: OpenAIVendorOptions, session: URLSession = .shared) -> any LLMProviderProtocol {
+                     options: OpenAIVendorOptions, thinkingEnabled: Bool = false,
+                     session: URLSession = .shared) -> any LLMProviderProtocol {
         switch protocolType {
+        case .chatGPT:
+            return ChatGPTResponsesProvider(model: model, lowReasoning: !thinkingEnabled, session: session) {
+                try await ChatGPTAuth.shared.accessToken()
+            }
         case .ollama:
             return OllamaProvider(baseURL: baseURL, model: model, session: session)
         case .anthropic:
