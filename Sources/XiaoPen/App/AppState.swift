@@ -478,26 +478,12 @@ public final class AppState {
         allowsFollowUp = isVoiceInput
         let prefs = AppPreferences.shared
         let selectedProvider = prefs.providerType
-        let requestOptions = prefs.openAIRequestOptions
-        let keyAccount = prefs.apiKeyAccount(for: selectedProvider)
-        let baseURL: String
-        let model: String
-        let configuration: [String]
-        switch selectedProvider {
-        case .ollama:
-            baseURL = prefs.ollamaBaseURL
-            model = prefs.ollamaModel
-            configuration = [prefs.providerType.rawValue, prefs.ollamaBaseURL, prefs.ollamaModel, prefs.systemPrompt]
-        case .anthropic:
-            baseURL = ""
-            model = prefs.anthropicModel
-            configuration = [prefs.providerType.rawValue, prefs.anthropicModel, prefs.systemPrompt]
-        case .openAI:
-            baseURL = prefs.openAIBaseURL
-            model = prefs.openAIModel
-            configuration = [prefs.providerType.rawValue, prefs.openAIBaseURL, prefs.openAIModel, prefs.systemPrompt,
+        let requestOptions = prefs.requestOptions
+        let keyAccount = prefs.currentKeyAccount
+        let baseURL = prefs.baseURL
+        let model = prefs.model
+        let configuration = [prefs.activeProviderID, selectedProvider.rawValue, baseURL, model, prefs.systemPrompt,
                              String(describing: requestOptions)]
-        }
         if configuration != historyConfiguration {
             history.clear()
             historyConfiguration = configuration
@@ -529,12 +515,8 @@ public final class AppState {
                 requestMessages[requestMessages.count - 1] = ChatMessage(
                     role: "user", content: AssistantContext.decorate(userText, now: Date(), city: city, extra: [extra])
                 )
-                let provider: any LLMProviderProtocol
-                switch selectedProvider {
-                case .ollama: provider = OllamaProvider(baseURL: baseURL, model: model)
-                case .anthropic: provider = AnthropicProvider(apiKey: apiKey, model: model)
-                case .openAI: provider = OpenAIProvider(baseURL: baseURL, apiKey: apiKey, model: model, options: requestOptions)
-                }
+                let provider = LLMProviderFactory.make(protocolType: selectedProvider, baseURL: baseURL,
+                                                       model: model, apiKey: apiKey, options: requestOptions)
                 self.logger.notice("模型请求开始：provider=\(selectedProvider.rawValue, privacy: .public), model=\(model, privacy: .public)")
                 let requestStartedAt = ProcessInfo.processInfo.systemUptime
                 let stream = try await provider.streamChat(messages: requestMessages, systemPrompt: systemPrompt)

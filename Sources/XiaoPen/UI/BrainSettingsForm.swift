@@ -25,115 +25,100 @@ struct BrainSettingsForm<Footer: View>: View {
         self.footer = footer()
     }
 
-    private enum BrainChoice: Hashable {
-        case vendor(LLMVendor), anthropic, ollama
-
-        var title: String {
-            switch self {
-            case .vendor(let vendor): return vendor.displayName
-            case .anthropic: return "Anthropic Claude"
-            case .ollama: return "本地 Ollama"
-            }
-        }
+    private var providerSelection: Binding<String> {
+        Binding(get: { prefs.activeProviderID }, set: { prefs.selectProvider($0) })
     }
 
-    private var brainChoices: [BrainChoice] { LLMVendor.allCases.map(BrainChoice.vendor) + [.anthropic, .ollama] }
-
-    private var brainChoice: Binding<BrainChoice> {
-        Binding(get: {
-            switch prefs.providerType {
-            case .openAI: return .vendor(prefs.openAIVendor)
-            case .anthropic: return .anthropic
-            case .ollama: return .ollama
-            }
-        }, set: { choice in
-            switch choice {
-            case .vendor(let vendor):
-                prefs.selectVendor(vendor)
-                prefs.providerType = .openAI
-            case .anthropic: prefs.providerType = .anthropic
-            case .ollama: prefs.providerType = .ollama
-            }
-        })
+    private var protocolSelection: Binding<LLMProviderType> {
+        Binding(get: { prefs.providerType }, set: { prefs.selectProtocol($0) })
     }
 
-    private var currentAccount: String? { prefs.apiKeyAccount(for: prefs.providerType) }
+    private var currentAccount: String? { prefs.currentKeyAccount }
 
     var body: some View {
         Form {
-                    Section("模型平台") {
-                        Picker("平台", selection: brainChoice) {
-                            ForEach(brainChoices, id: \.self) { choice in Text(choice.title).tag(choice) }
-                        }
-                        Text("各平台的地址、模型和密钥分别保存，切换后不会丢失。")
-                            .font(.footnote).foregroundStyle(.secondary)
-                    }
-                    switch prefs.providerType {
-                    case .ollama:
-                        Section("Ollama 本地配置") {
-                            TextField("Base URL", text: $prefs.ollamaBaseURL)
-                            TextField("模型名称", text: $prefs.ollamaModel)
-                            Text("填写本机已安装、支持文本对话的模型。")
-                                .font(.footnote).foregroundStyle(.secondary)
-                        }
-                    case .anthropic:
-                        Section("Anthropic Claude 配置") {
-                            TextField("模型名称", text: $prefs.anthropicModel)
-                            SecureField("Claude API Key", text: keyBinding())
-                                .onSubmit { Task { await saveCurrentKey() } }
-                            keyStorageNote
-                        }
-                    case .openAI:
-                        Section("\(prefs.openAIVendor.displayName) 配置") {
-                            TextField("Base URL", text: $prefs.openAIBaseURL)
-                            HStack {
-                                TextField("模型名称", text: $prefs.openAIModel)
-                                Menu("常用") {
-                                    ForEach(prefs.openAIVendor.suggestedModels, id: \.self) { model in
-                                        Button(model) { prefs.openAIModel = model }
-                                    }
-                                }
-                                .fixedSize()
+            let preset = prefs.activeProvider
+            Section {
+                Picker("大脑", selection: providerSelection) {
+                    ForEach(ProviderPreset.Group.allCases, id: \.self) { group in
+                        Section(group.title) {
+                            ForEach(ProviderCatalog.all.filter { $0.group == group }) { item in
+                                Text(item.name).tag(item.id)
                             }
-                            SecureField("API Key", text: keyBinding())
-                                .onSubmit { Task { await saveCurrentKey() } }
-                            if let url = prefs.openAIVendor.consoleURL {
-                                Link("在\(prefs.openAIVendor.displayName)控制台获取 API Key", destination: url)
-                                    .font(.footnote)
-                            }
-                            Text("语音对话建议选 flash / highspeed 等快速模型。模型列表常有变化，以平台控制台为准。")
-                                .font(.footnote).foregroundStyle(.secondary)
-                            keyStorageNote
                         }
                     }
-                    if prefs.supportsWebSearch {
+                }
+                if let note = preset.note {
+                    Text(note).font(.footnote).foregroundStyle(.secondary)
+                }
+            } footer: {
+                Text("每个入口的地址、模型和密钥分别保存，切换后不会丢失。")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            Section("\(preset.name) 配置") {
+                if preset.protocols.count > 1 {
+                    Picker("接口协议", selection: protocolSelection) {
+                        ForEach(preset.protocols, id: \.self) { item in Text(item.displayName).tag(item) }
+                    }
+                    .pickerStyle(.segmented)
+                }
+                TextField(baseURLLabel, text: $prefs.baseURL,
+                          prompt: Text(preset.defaultBaseURL(for: prefs.providerType).isEmpty
+                                       ? "https://example.com/anthropic" : preset.defaultBaseURL(for: prefs.providerType)))
+                HStack {
+                    TextField("模型", text: $prefs.model)
+                    if !preset.suggestedModels.isEmpty {
+                        Menu("常用") {
+                            ForEach(preset.suggestedModels, id: \.self) { model in
+                                Button(model) { prefs.model = model }
+                            }
+                        }
+                        .fixedSize()
+                    }
+                }
+                if currentAccount != nil {
+                    SecureField(preset.requiresKey ? "API Key" : "API Key（可选）", text: keyBinding())
+                        .onSubmit { Task { await saveCurrentKey() } }
+                    if let url = preset.consoleURL {
+                        Link("在 \(preset.name) 控制台获取 API Key", destination: url).font(.footnote)
+                    }
+                    keyStorageNote
+                }
+                if preset.group == .vendor, prefs.providerType == .openAI {
+                    Text("语音对话建议选 flash、highspeed 等快速模型。模型列表常有变化，以平台控制台为准。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            if prefs.supportsWebSearch {
                 Section("联网搜索") {
                     Toggle("允许联网搜索", isOn: $prefs.isWebSearchEnabled)
                     Text("问新闻、比赛、行情等最新信息时，由模型自行判断是否搜索。搜索时第一句回答会慢约半秒；平台按次收费（快速搜索约 3 元 / 千次，搜到的内容另按输入 token 计费），从你的账户扣除。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
-            if prefs.providerType == .openAI, prefs.supportsThinkingControl {
-                        Section("回复速度") {
-                            Toggle("深度思考", isOn: $prefs.openAIThinkingEnabled)
-                            Text("日常语音聊天建议关闭：思考会让第一句回答晚好几秒。复杂问题可临时开启。")
-                                .font(.footnote).foregroundStyle(.secondary)
-                        }
-                    }
-                    Section {
-                        HStack {
-                            Button("测试模型连通性", action: testConnection)
-                                .disabled(isTestingConnection || isLoadingKey)
-                            if isTestingConnection { ProgressView().controlSize(.small) }
-                        }
-                        Text("检查服务、鉴权和所选模型，不生成对话。")
-                            .font(.footnote).foregroundStyle(.secondary)
-                        if let result = testResult {
-                            Text(result).font(.footnote)
-                                .foregroundStyle(testSucceeded ? Color.green : Color.red)
-                                .textSelection(.enabled)
-                        }
-                    }
+            if prefs.supportsThinkingControl {
+                Section("回复速度") {
+                    Toggle("深度思考", isOn: $prefs.thinkingEnabled)
+                    Text("日常语音聊天建议关闭：思考会让第一句回答晚好几秒。复杂问题可临时开启。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            Section {
+                HStack {
+                    Button("测试连接", action: testConnection)
+                        .disabled(isTestingConnection || isLoadingKey)
+                    if isTestingConnection { ProgressView().controlSize(.small) }
+                }
+                Text(prefs.providerType == .anthropic && URL(string: prefs.baseURL)?.host != "api.anthropic.com"
+                     ? "会发送一条极短的消息来检查地址、密钥和模型（消耗极少量 token）。"
+                     : "检查服务、密钥和所选模型，不生成对话。")
+                    .font(.footnote).foregroundStyle(.secondary)
+                if let result = testResult {
+                    Text(result).font(.footnote)
+                        .foregroundStyle(testSucceeded ? Color.green : Color.red)
+                        .textSelection(.enabled)
+                }
+            }
             footer
         }
         .formStyle(.grouped)
@@ -151,6 +136,14 @@ struct BrainSettingsForm<Footer: View>: View {
             isTestingConnection = false
             let accounts = editedKeys
             Task { for account in accounts { _ = await saveKey(keyInputs[account] ?? "", account: account) } }
+        }
+    }
+
+    private var baseURLLabel: String {
+        switch prefs.providerType {
+        case .openAI: return "接口地址（OpenAI 兼容）"
+        case .anthropic: return "接口地址（Anthropic 兼容）"
+        case .ollama: return "Ollama 地址"
         }
     }
 
@@ -176,9 +169,8 @@ struct BrainSettingsForm<Footer: View>: View {
     }
 
     private var connectionConfiguration: [String] {
-        [prefs.providerType.rawValue, prefs.ollamaBaseURL, prefs.ollamaModel,
-         prefs.anthropicModel, prefs.openAIVendor.rawValue, prefs.openAIBaseURL, prefs.openAIModel,
-         currentAccount.flatMap { keyInputs[$0] } ?? "", String(prefs.openAIThinkingEnabled)]
+        [prefs.activeProviderID, prefs.providerType.rawValue, prefs.baseURL, prefs.model,
+         currentAccount.flatMap { keyInputs[$0] } ?? "", String(prefs.thinkingEnabled)]
     }
 
     private var currentKeyTaskID: String {
@@ -259,13 +251,8 @@ struct BrainSettingsForm<Footer: View>: View {
         let configuration = connectionConfiguration
         let account = currentAccount
         let key = (account.flatMap { keyInputs[$0] } ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let provider: any LLMProviderProtocol
-        switch prefs.providerType {
-        case .ollama: provider = OllamaProvider(baseURL: prefs.ollamaBaseURL, model: prefs.ollamaModel)
-        case .anthropic: provider = AnthropicProvider(apiKey: key, model: prefs.anthropicModel)
-        case .openAI: provider = OpenAIProvider(baseURL: prefs.openAIBaseURL, apiKey: key, model: prefs.openAIModel,
-                                                options: prefs.openAIRequestOptions)
-        }
+        let provider = LLMProviderFactory.make(protocolType: prefs.providerType, baseURL: prefs.baseURL,
+                                               model: prefs.model, apiKey: key, options: prefs.requestOptions)
         isTestingConnection = true
         testResult = nil
         connectionTask = Task { @MainActor in
