@@ -16,6 +16,7 @@ struct SponsorView: View {
                 code("SponsorAlipay", title: "支付宝")
             }
             HStack {
+                Link("在爱发电支持", destination: AppInfo.afdianURL)
                 Link("给项目点个 Star", destination: AppInfo.homepage)
                 Spacer()
                 Button("关闭") { dismiss() }.keyboardShortcut(.defaultAction)

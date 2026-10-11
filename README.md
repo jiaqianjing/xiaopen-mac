@@ -49,6 +49,9 @@
 
 小喷是一个人业余维护的开源项目。如果它帮到了你，欢迎请作者喝杯咖啡 ☕️
 
+- 爱发电：[afdian.com/a/kenjia](https://afdian.com/a/kenjia)（支持按月赞助）
+- 微信 / 支付宝扫码：
+
 <table>
   <tr>
     <td align="center"><img src="Sources/XiaoPen/Resources/SponsorWeChat.png" width="220" alt="微信赞赏"><br>微信</td>
