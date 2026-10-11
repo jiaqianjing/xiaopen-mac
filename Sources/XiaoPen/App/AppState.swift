@@ -549,6 +549,14 @@ public final class AppState {
         replySubmittedAt = ProcessInfo.processInfo.systemUptime
         if processSystemVolumePrompt(userText, systemInput: systemInput) { return }
         if processReminderPrompt(userText) { return }
+        if model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            hasModelError = true
+            errorMessage = selectedProvider == .chatGPT
+                ? "还没有选择 ChatGPT 模型，请在设置 → 大脑中登录并选择模型。"
+                : "还没有填写模型名称，请在设置 → 大脑中选择模型。"
+            finishInteraction()
+            return
+        }
         let messages = history.messages(adding: userText)
         let systemPrompt = prefs.systemPrompt + AssistantContext.systemPromptSuffix
             + (selectedProvider == .openAI && requestOptions.enableSearch ? AssistantContext.webSearchSuffix : "")

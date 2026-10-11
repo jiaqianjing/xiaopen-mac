@@ -24,6 +24,8 @@ public final class ChatGPTAuth {
 
     public private(set) var status: Status = .signedOut
     public private(set) var models: [String] = []
+    /// Why the model list could not be loaded, shown next to a manual model field.
+    public private(set) var modelsError: String?
 
     struct Credentials: Codable, Equatable {
         var clientID: String
@@ -207,16 +209,36 @@ public final class ChatGPTAuth {
 
     /// Model IDs the signed-in account may use (`visibility: "list"`).
     public func loadModels() async {
-        guard let token = try? await accessToken() else { return }
+        let token: String
+        do {
+            token = try await accessToken()
+        } catch {
+            modelsError = error.localizedDescription
+            return
+        }
         var request = URLRequest(url: URL(string: "\(Self.resource)/models")!)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 15
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
-              (response as? HTTPURLResponse)?.statusCode == 200,
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let entries = json["data"] as? [[String: Any]] else { return }
-        models = entries.filter { ($0["visibility"] as? String ?? "list") == "list" }
-            .compactMap { $0["id"] as? String }
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            guard status == 200, let entries = json?["data"] as? [[String: Any]] else {
+                let detail = (json?["error"] as? [String: Any]).map { "\($0["code"] as? String ?? "") \($0["message"] as? String ?? "")" }
+                    ?? String(decoding: data.prefix(200), as: UTF8.self)
+                logger.error("ChatGPT 模型列表读取失败：status=\(status), detail=\(detail, privacy: .public)")
+                modelsError = "读取模型列表失败（HTTP \(status)）\(detail.isEmpty ? "" : "：\(detail)")"
+                return
+            }
+            let listed = entries.filter { ($0["visibility"] as? String ?? "list") == "list" }.compactMap { $0["id"] as? String }
+            // Prefer the documented filter, but never hide every model.
+            models = listed.isEmpty ? entries.compactMap { $0["id"] as? String } : listed
+            modelsError = models.isEmpty ? "账号下没有可用的模型。" : nil
+            logger.notice("ChatGPT 模型列表：count=\(self.models.count), models=\(self.models.prefix(12).joined(separator: ","), privacy: .public)")
+        } catch {
+            logger.error("ChatGPT 模型列表请求失败：\(error.localizedDescription, privacy: .public)")
+            modelsError = "读取模型列表失败：\(error.localizedDescription)"
+        }
     }
 
     private func save(_ credentials: Credentials) throws {

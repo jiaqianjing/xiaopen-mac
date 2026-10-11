@@ -151,11 +151,19 @@ struct BrainSettingsForm<Footer: View>: View {
             case .signedIn(let email):
                 LabeledContent("已登录", value: email ?? "ChatGPT 账号")
                 HStack {
-                    Picker("模型", selection: $prefs.model) {
-                        if !chatGPT.models.contains(prefs.model) { Text(prefs.model.isEmpty ? "请选择" : prefs.model).tag(prefs.model) }
-                        ForEach(chatGPT.models, id: \.self) { Text($0).tag($0) }
+                    if chatGPT.models.isEmpty {
+                        TextField("模型", text: $prefs.model, prompt: Text("模型名称"))
+                    } else {
+                        Picker("模型", selection: $prefs.model) {
+                            if !chatGPT.models.contains(prefs.model) { Text(prefs.model.isEmpty ? "请选择" : prefs.model).tag(prefs.model) }
+                            ForEach(chatGPT.models, id: \.self) { Text($0).tag($0) }
+                        }
                     }
                     Button("刷新") { Task { await chatGPT.loadModels() } }
+                }
+                if let error = chatGPT.modelsError {
+                    Text("\(error) 可以点“刷新”重试，或手动填写模型名称。")
+                        .font(.footnote).foregroundStyle(.orange).textSelection(.enabled)
                 }
                 Button("退出登录") { chatGPT.signOut() }
             case .signingIn:
