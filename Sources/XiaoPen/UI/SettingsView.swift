@@ -97,9 +97,13 @@ public struct SettingsView: View {
                 }
                 Toggle("回声消除（推荐）", isOn: $prefs.isEchoCancellationEnabled)
                     .onChange(of: prefs.isEchoCancellationEnabled) { _, _ in appState.refreshWakeSettings() }
-                Toggle("回答时说唤醒词可以打断", isOn: $prefs.isBargeInEnabled)
-                    .disabled(!prefs.isEchoCancellationEnabled || !prefs.isWakeWordEnabled)
-                Text("回声消除使用 macOS 的语音处理，从麦克风里去掉小喷自己的声音，并做降噪和自动增益。开启后回答时也能用唤醒词打断。使用蓝牙耳机时会自动关闭。")
+                Picker("回答时打断", selection: $prefs.bargeInMode) {
+                    Text("直接说话就能打断").tag(BargeInMode.natural)
+                    Text("说唤醒词才打断").tag(BargeInMode.wakeWord)
+                    Text("不打断").tag(BargeInMode.off)
+                }
+                .disabled(!prefs.isEchoCancellationEnabled || !prefs.isWakeWordEnabled)
+                Text("回声消除使用 macOS 的语音处理，从麦克风里去掉小喷自己的声音，并做降噪和自动增益，打断依赖它。“直接说话”会在听到人声时先压低音量并用云端识别确认，确认是你在说话才停下；需要云端识别。使用蓝牙耳机时会自动关闭。")
                     .font(.footnote).foregroundStyle(.secondary)
                 Toggle("回答后继续听，不用再叫我", isOn: $prefs.isFollowUpEnabled)
                 if prefs.isFollowUpEnabled {

@@ -90,6 +90,7 @@ final class CloudSpeechSession: @unchecked Sendable {
     }
 
     static let endpoint = URL(string: "wss://maas.qianwenaiapi.com/api-ws/v1/inference")!
+    let id = UUID()
 
     private let model: String
     private let endpoint: URL

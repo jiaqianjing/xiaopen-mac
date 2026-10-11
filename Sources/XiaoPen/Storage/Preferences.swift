@@ -20,6 +20,17 @@ public enum LLMProviderType: String, CaseIterable, Identifiable, Codable, Sendab
     }
 }
 
+/// How a reply can be interrupted by voice.
+public enum BargeInMode: String, CaseIterable, Identifiable, Codable, Sendable {
+    /// Just start talking (needs echo cancellation and cloud recognition).
+    case natural
+    /// Say the wake word.
+    case wakeWord
+    case off
+
+    public var id: String { rawValue }
+}
+
 /// Who transcribes the question after a local wake-up.
 public enum SpeechRecognitionMode: String, CaseIterable, Identifiable, Codable, Sendable {
     case cloud
@@ -190,10 +201,11 @@ public final class AppPreferences: @unchecked Sendable {
     public var isEchoCancellationEnabled: Bool {
         didSet { defaults.set(isEchoCancellationEnabled, forKey: "isEchoCancellationEnabled") }
     }
-    /// Saying the wake word while a reply plays stops it and starts a new question.
-    public var isBargeInEnabled: Bool {
-        didSet { defaults.set(isBargeInEnabled, forKey: "isBargeInEnabled") }
+    public var bargeInMode: BargeInMode {
+        didSet { defaults.set(bargeInMode.rawValue, forKey: "bargeInMode") }
     }
+    /// The wake word interrupts in both voice modes.
+    public var isBargeInEnabled: Bool { bargeInMode != .off }
     /// The wake word is always recognized on this Mac; this chooses who transcribes the question.
     public var speechRecognitionMode: SpeechRecognitionMode {
         didSet { defaults.set(speechRecognitionMode.rawValue, forKey: "speechRecognitionMode") }
@@ -301,7 +313,8 @@ public final class AppPreferences: @unchecked Sendable {
         self.isGlobalHotKeyEnabled = defaults.object(forKey: "isGlobalHotKeyEnabled") as? Bool ?? true
         self.transcriptDiagnosticsUntil = defaults.object(forKey: "transcriptDiagnosticsUntil") as? Date
         self.isEchoCancellationEnabled = defaults.object(forKey: "isEchoCancellationEnabled") as? Bool ?? true
-        self.isBargeInEnabled = defaults.object(forKey: "isBargeInEnabled") as? Bool ?? true
+        self.bargeInMode = BargeInMode(rawValue: defaults.string(forKey: "bargeInMode") ?? "")
+            ?? ((defaults.object(forKey: "isBargeInEnabled") as? Bool) == false ? .off : .natural)
         self.speechRecognitionMode = SpeechRecognitionMode(rawValue: defaults.string(forKey: "speechRecognitionMode") ?? "") ?? .cloud
         self.cloudASRModel = defaults.string(forKey: "cloudASRModel") ?? Self.cloudASRModels[0]
         // People who already configured a model skip the first-run guide.
