@@ -15,6 +15,7 @@ public struct SettingsView: View {
     @State private var launchAtLoginError: String?
     @State private var isModelInstalled = LocalSpeechWorker.isModelInstalled
     @State private var cloudKeyMissing = false
+    @State private var showsSponsor = false
     @State private var cloudTestResult: String?
     @State private var isTestingCloud = false
 
@@ -30,6 +31,7 @@ public struct SettingsView: View {
             about.tabItem { Label("关于", systemImage: "info.circle") }
         }
         .frame(width: 600, height: 580)
+        .sheet(isPresented: $showsSponsor) { SponsorView() }
         .onChange(of: prefs.isWakeWordEnabled) { _, _ in appState.refreshWakeSettings() }
         .onChange(of: prefs.ttsEngine) { _, engine in
             if engine == .localQwen, LocalSpeechWorker.isModelInstalled { Task { await synthesizer.prepareLocalModel() } }
@@ -340,6 +342,13 @@ public struct SettingsView: View {
                     }
                 }
                 .padding(.vertical, 4)
+            }
+            Section {
+                HStack {
+                    Label("小喷是开源项目，欢迎支持作者。", systemImage: "heart.fill").foregroundStyle(.pink)
+                    Spacer()
+                    Button("支持小喷") { showsSponsor = true }
+                }
             }
             Section("更新") {
                 HStack {

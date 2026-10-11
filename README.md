@@ -45,6 +45,19 @@
 
 设置 → 关于 → “导出诊断信息…” 可以生成一份不含对话内容和密钥的日志，附在 [Issues](https://github.com/jiaqianjing/xiaopen-mac/issues) 里会很有帮助。
 
+## 支持小喷
+
+小喷是一个人业余维护的开源项目。如果它帮到了你，欢迎请作者喝杯咖啡 ☕️
+
+<table>
+  <tr>
+    <td align="center"><img src="Sources/XiaoPen/Resources/SponsorWeChat.png" width="220" alt="微信赞赏"><br>微信</td>
+    <td align="center"><img src="Sources/XiaoPen/Resources/SponsorAlipay.png" width="220" alt="支付宝赞赏"><br>支付宝</td>
+  </tr>
+</table>
+
+也可以在应用的“设置 → 关于 → 支持小喷”里扫码。给项目点个 Star、提交问题和建议，同样是很大的支持。
+
 ## 开发
 
 ```bash
