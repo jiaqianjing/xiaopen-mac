@@ -32,6 +32,7 @@ enum AppInfo {
     static let homepage = URL(string: "https://github.com/jiaqianjing/xiaopen-mac")!
     static let privacyURL = URL(string: "https://github.com/jiaqianjing/xiaopen-mac/blob/main/docs/PRIVACY.md")!
     static let issuesURL = URL(string: "https://github.com/jiaqianjing/xiaopen-mac/issues")!
+    static let afdianURL = URL(string: "https://afdian.com/a/kenjia")!
 }
 
 /// Collects this run's app logs plus non-sensitive configuration into a text file
