@@ -186,6 +186,14 @@ public final class AppPreferences: @unchecked Sendable {
     public var showsStandbyTranscript: Bool {
         didSet { defaults.set(showsStandbyTranscript, forKey: "showsStandbyTranscript") }
     }
+    /// Voice processing on the microphone; required for barge-in.
+    public var isEchoCancellationEnabled: Bool {
+        didSet { defaults.set(isEchoCancellationEnabled, forKey: "isEchoCancellationEnabled") }
+    }
+    /// Saying the wake word while a reply plays stops it and starts a new question.
+    public var isBargeInEnabled: Bool {
+        didSet { defaults.set(isBargeInEnabled, forKey: "isBargeInEnabled") }
+    }
     /// The wake word is always recognized on this Mac; this chooses who transcribes the question.
     public var speechRecognitionMode: SpeechRecognitionMode {
         didSet { defaults.set(speechRecognitionMode.rawValue, forKey: "speechRecognitionMode") }
@@ -292,6 +300,8 @@ public final class AppPreferences: @unchecked Sendable {
         self.showsStandbyTranscript = defaults.object(forKey: "showsStandbyTranscript") as? Bool ?? false
         self.isGlobalHotKeyEnabled = defaults.object(forKey: "isGlobalHotKeyEnabled") as? Bool ?? true
         self.transcriptDiagnosticsUntil = defaults.object(forKey: "transcriptDiagnosticsUntil") as? Date
+        self.isEchoCancellationEnabled = defaults.object(forKey: "isEchoCancellationEnabled") as? Bool ?? true
+        self.isBargeInEnabled = defaults.object(forKey: "isBargeInEnabled") as? Bool ?? true
         self.speechRecognitionMode = SpeechRecognitionMode(rawValue: defaults.string(forKey: "speechRecognitionMode") ?? "") ?? .cloud
         self.cloudASRModel = defaults.string(forKey: "cloudASRModel") ?? Self.cloudASRModels[0]
         // People who already configured a model skip the first-run guide.

@@ -95,6 +95,12 @@ public struct SettingsView: View {
                     Text("建议 4 个字左右、叠词效果最好。同音字也能唤醒（例如“小盆小盆”）。关闭后待命时不采音，仍可用快捷键或菜单开始说话。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
+                Toggle("回声消除（推荐）", isOn: $prefs.isEchoCancellationEnabled)
+                    .onChange(of: prefs.isEchoCancellationEnabled) { _, _ in appState.refreshWakeSettings() }
+                Toggle("回答时说唤醒词可以打断", isOn: $prefs.isBargeInEnabled)
+                    .disabled(!prefs.isEchoCancellationEnabled || !prefs.isWakeWordEnabled)
+                Text("回声消除使用 macOS 的语音处理，从麦克风里去掉小喷自己的声音，并做降噪和自动增益。开启后回答时也能用唤醒词打断。使用蓝牙耳机时会自动关闭。")
+                    .font(.footnote).foregroundStyle(.secondary)
                 Toggle("回答后继续听，不用再叫我", isOn: $prefs.isFollowUpEnabled)
                 if prefs.isFollowUpEnabled {
                     Slider(value: $prefs.followUpSeconds, in: 3...12, step: 1) {

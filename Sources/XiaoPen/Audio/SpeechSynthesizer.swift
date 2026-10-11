@@ -135,21 +135,47 @@ public final class SpeechSynthesizer: NSObject, AVSpeechSynthesizerDelegate {
     private func queue(_ text: String, sessionID: UUID) {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               let utteranceID = session.enqueueUtterance(sessionID: sessionID) else { return }
-        if streamEngine == .localQwen {
-            localQueue.append(LocalUtterance(text: text, sessionID: sessionID, utteranceID: utteranceID))
-            localPlayback[utteranceID] = LocalPlayback()
-            startLocalGenerationIfNeeded(sessionID: sessionID)
-            return
-        }
+        // Both voices render to PCM and play through the capture engine's player, so
+        // echo cancellation can remove them from the microphone.
+        localQueue.append(LocalUtterance(text: text, sessionID: sessionID, utteranceID: utteranceID))
+        localPlayback[utteranceID] = LocalPlayback()
+        startLocalGenerationIfNeeded(sessionID: sessionID)
+    }
+
+    /// Renders one sentence with the system voice as 24 kHz mono samples.
+    private func systemSpeechSamples(_ text: String) -> AsyncStream<[Float]> {
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = AVSpeechSynthesisVoice(language: "zh-CN")
         utterance.rate = streamRate
         utterance.pitchMultiplier = 1.05
         utterance.volume = 1.0
+        let converter = SystemSpeechConverter()
+        return AsyncStream { continuation in
+            converter.onIdle = { continuation.finish() }
+            synthesizer.write(utterance) { buffer in
+                guard let pcm = buffer as? AVAudioPCMBuffer else { return }
+                if pcm.frameLength == 0 {
+                    continuation.finish()
+                    return
+                }
+                if let samples = converter.convert(pcm) { continuation.yield(samples) }
+            }
+        }
+    }
 
-        utteranceTokens.insert(SpeechUtteranceToken(sessionID: sessionID, utteranceID: utteranceID),
-                               for: ObjectIdentifier(utterance))
-        synthesizer.speak(utterance)
+    /// The capture engine's player when available (echo cancellation), otherwise a private engine.
+    private func preparePlayer() throws -> AVAudioPlayerNode {
+        if let currentPlayer { return currentPlayer }
+        let player: AVAudioPlayerNode
+        do {
+            try AudioEngineManager.shared.startForPlayback()
+            player = AudioEngineManager.shared.speechPlayer
+        } catch {
+            if !playbackEngine.isRunning { try playbackEngine.start() }
+            player = playbackNode
+        }
+        currentPlayer = player
+        return player
     }
 
     public func stop() {
@@ -164,8 +190,7 @@ public final class SpeechSynthesizer: NSObject, AVSpeechSynthesizerDelegate {
         localQueue.removeAll()
         localPlayback.removeAll()
         startedLocalUtterances.removeAll()
-        playbackNode.stop()
-        playbackEngine.stop()
+        stopPlayers()
         if let oldSession {
             if streamEngine == .localQwen {
                 preparationID = nil
@@ -214,15 +239,23 @@ public final class SpeechSynthesizer: NSObject, AVSpeechSynthesizerDelegate {
                 let utterance = self.localQueue.removeFirst()
                 do {
                     try Task.checkCancellation()
-                    let stream = try await self.localWorker.generate(
-                        text: utterance.text, voice: voice, style: style,
-                        sessionID: sessionID, utteranceID: utterance.utteranceID)
-                    for try await event in stream {
-                        try Task.checkCancellation()
-                        guard self.session.isCurrent(sessionID) else { return }
-                        switch event {
-                        case .audio(let samples, let sampleRate):
-                            try self.scheduleAudio(samples, sampleRate: sampleRate, utterance: utterance)
+                    if self.streamEngine == .localQwen {
+                        let stream = try await self.localWorker.generate(
+                            text: utterance.text, voice: voice, style: style,
+                            sessionID: sessionID, utteranceID: utterance.utteranceID)
+                        for try await event in stream {
+                            try Task.checkCancellation()
+                            guard self.session.isCurrent(sessionID) else { return }
+                            switch event {
+                            case .audio(let samples, let sampleRate):
+                                try self.scheduleAudio(samples, sampleRate: sampleRate, utterance: utterance)
+                            }
+                        }
+                    } else {
+                        for await samples in self.systemSpeechSamples(utterance.text) {
+                            try Task.checkCancellation()
+                            guard self.session.isCurrent(sessionID) else { return }
+                            try self.scheduleAudio(samples, sampleRate: 24_000, utterance: utterance)
                         }
                     }
                     try Task.checkCancellation()
@@ -245,6 +278,14 @@ public final class SpeechSynthesizer: NSObject, AVSpeechSynthesizerDelegate {
     }
 
     @ObservationIgnored private var startedLocalUtterances: Set<UUID> = []
+    @ObservationIgnored private var currentPlayer: AVAudioPlayerNode?
+
+    private func stopPlayers() {
+        currentPlayer = nil
+        AudioEngineManager.shared.speechPlayer.stop()
+        playbackNode.stop()
+        playbackEngine.stop()
+    }
 
     private func scheduleAudio(_ samples: [Float], sampleRate: Int, utterance: LocalUtterance) throws {
         guard sampleRate == 24_000, !samples.isEmpty,
@@ -256,11 +297,11 @@ public final class SpeechSynthesizer: NSObject, AVSpeechSynthesizerDelegate {
             guard let base = source.baseAddress else { return }
             channel.update(from: base, count: source.count)
         }
-        if !playbackEngine.isRunning { try playbackEngine.start() }
+        let player = try preparePlayer()
         guard var playback = localPlayback[utterance.utteranceID] else { return }
         playback.scheduledBuffers += 1
         localPlayback[utterance.utteranceID] = playback
-        playbackNode.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+        player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self, self.session.isCurrent(utterance.sessionID),
                       var playback = self.localPlayback[utterance.utteranceID] else { return }
@@ -269,9 +310,9 @@ public final class SpeechSynthesizer: NSObject, AVSpeechSynthesizerDelegate {
                 self.completeLocalUtteranceIfReady(utterance)
             }
         }
-        if !playbackNode.isPlaying { playbackNode.play() }
+        if !player.isPlaying { player.play() }
         startedLocalUtterances.insert(utterance.utteranceID)
-        localModelStatus = "Qwen3-TTS 1.7B · 本机语音已就绪"
+        if streamEngine == .localQwen { localModelStatus = "Qwen3-TTS 1.7B · 本机语音已就绪" }
         if session.didStart(utteranceID: utterance.utteranceID, sessionID: utterance.sessionID) {
             onSpeakingStarted?(utterance.sessionID)
         }
@@ -294,8 +335,7 @@ public final class SpeechSynthesizer: NSObject, AVSpeechSynthesizerDelegate {
         localQueue.removeAll()
         localPlayback.removeAll()
         startedLocalUtterances.removeAll()
-        playbackNode.stop()
-        playbackEngine.stop()
+        stopPlayers()
         if streamEngine == .localQwen { localModelStatus = error.localizedDescription }
         onSpeechError?(sessionID, error.localizedDescription)
         if streamEngine == .localQwen { Task { await localWorker.stop(sessionID: sessionID) } }
@@ -331,5 +371,56 @@ public final class SpeechSynthesizer: NSObject, AVSpeechSynthesizerDelegate {
             guard let self, self.session.isCurrent(token.sessionID) else { return }
             self.failSpeech(LocalSpeechError.systemInterrupted, sessionID: token.sessionID)
         }
+    }
+}
+
+/// Converts system-voice buffers to the player's 24 kHz mono float format, and ends a
+/// sentence if the synthesizer never sends its terminating empty buffer.
+private final class SystemSpeechConverter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var converter: AVAudioConverter?
+    private var inputFormat: AVAudioFormat?
+    private var lastBufferAt = Date()
+    private var idleTimer: DispatchSourceTimer?
+    var onIdle: (() -> Void)? {
+        didSet { startIdleTimer() }
+    }
+
+    func convert(_ buffer: AVAudioPCMBuffer) -> [Float]? {
+        lock.lock()
+        defer { lock.unlock() }
+        lastBufferAt = Date()
+        let output = AudioEngineManager.speechFormat
+        if inputFormat != buffer.format {
+            converter = AVAudioConverter(from: buffer.format, to: output)
+            inputFormat = buffer.format
+        }
+        guard let converter else { return nil }
+        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * output.sampleRate / buffer.format.sampleRate) + 32
+        guard let converted = AVAudioPCMBuffer(pcmFormat: output, frameCapacity: capacity) else { return nil }
+        var supplied = false
+        converter.convert(to: converted, error: nil) { _, status in
+            if supplied { status.pointee = .noDataNow; return nil }
+            supplied = true
+            status.pointee = .haveData
+            return buffer
+        }
+        guard converted.frameLength > 0, let channel = converted.floatChannelData?[0] else { return nil }
+        return Array(UnsafeBufferPointer(start: channel, count: Int(converted.frameLength)))
+    }
+
+    private func startIdleTimer() {
+        let timer = DispatchSource.makeTimerSource(queue: .global())
+        timer.schedule(deadline: .now() + 2, repeating: 0.5)
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            let idle = self.lock.withLock { Date().timeIntervalSince(self.lastBufferAt) > 2 }
+            if idle {
+                timer.cancel()
+                self.onIdle?()
+            }
+        }
+        idleTimer = timer
+        timer.resume()
     }
 }

@@ -92,6 +92,8 @@ public final class AppState {
     private var cloudUnavailableUntil: TimeInterval = 0
     /// The reply just spoken, to recognize the speaker's own voice coming back in follow-up.
     private var lastSpokenReply = ""
+    /// Listening for the wake word while a reply is being prepared or spoken.
+    private var isBargeInListening = false
     @ObservationIgnored private let logger = Logger(subsystem: "com.jiaqianjing.XiaoPen", category: "lifecycle")
 
     private init() {
@@ -201,6 +203,10 @@ public final class AppState {
                             self.stopListeningAndProcess(finalResultAvailable: true)
                         }
                     }
+                } else if self.state == .thinking || self.state == .speaking {
+                    if self.isBargeInListening {
+                        self.bargeInIfWakeWordHeard(transcript: transcript, identifier: identifier)
+                    }
                 } else if self.state == .listening {
                     if var query = self.transcriptHandoff.update(transcript: transcript, sessionID: identifier, isFinal: isFinal) {
                         if self.isFollowUpListening, let stripped = self.strippingWakeWord(from: query) {
@@ -304,6 +310,7 @@ public final class AppState {
 
     public func refreshWakeSettings() {
         CloudAudioTap.shared.setEnabled(AppPreferences.shared.speechRecognitionMode == .cloud)
+        AudioEngineManager.shared.prefersEchoCancellation = AppPreferences.shared.isEchoCancellationEnabled
         guard state == .idle else { return }
         let prefs = AppPreferences.shared
         guard permissionsGranted else { return }
@@ -501,6 +508,7 @@ public final class AppState {
         logger.notice("语音输入结束：characters=\(prompt.count)")
         diagnose("提交的问题", prompt)
         deviceStatus = "回复期间麦克风已暂停"
+        startBargeInListening()
         processPrompt(prompt, systemInput: systemInput, isVoiceInput: true)
     }
 
@@ -517,6 +525,7 @@ public final class AppState {
         state = .thinking
         deviceStatus = "回复期间麦克风已暂停"
         isHUDVisible = true
+        startBargeInListening()
         processPrompt(prompt)
     }
 
@@ -718,6 +727,7 @@ public final class AppState {
         // A follow-up lets the user say "再过五分钟" without the wake word.
         allowsFollowUp = permissionsGranted
         NSSound(named: "Glass")?.play()
+        startBargeInListening()
         activeSpeechID = SpeechSynthesizer.shared.speak(text: currentResponse, rate: AppPreferences.shared.ttsVoiceRate)
         return true
     }
@@ -736,6 +746,39 @@ public final class AppState {
 
     public func removeReminder(_ reminder: Reminder) {
         ReminderStore.shared.remove(reminder)
+    }
+
+    // MARK: - Barge-in
+
+    /// With echo cancellation the microphone no longer hears the reply, so it can stay
+    /// open: the wake word then interrupts the reply like on a smart speaker.
+    private func startBargeInListening() {
+        let prefs = AppPreferences.shared
+        guard prefs.isBargeInEnabled, prefs.isEchoCancellationEnabled, prefs.isWakeWordEnabled,
+              WakeWordDetector.isValid(prefs.wakeWord), permissionsGranted, speechBlockReason == nil else { return }
+        AudioEngineManager.shared.prefersEchoCancellation = true
+        do { try AudioEngineManager.shared.startForPlayback() } catch { return }
+        guard AudioEngineManager.shared.isEchoCancelling else { return }
+        wantsAudioCapture = true
+        isBargeInListening = true
+        activeRecognitionID = SpeechRecognizer.shared.startRecognition(wakeWord: prefs.wakeWord)
+        deviceStatus = "回复中 · 说“\(prefs.wakeWord)”可以打断"
+    }
+
+    private func bargeInIfWakeWordHeard(transcript: String, identifier: UUID) {
+        let wakeWord = AppPreferences.shared.wakeWord
+        guard WakeWordDetector.query(in: transcript, targetWakeWord: wakeWord, isEnabled: true) != nil else { return }
+        logger.notice("语音打断：停止当前回答")
+        diagnose("打断时识别文字", transcript)
+        currentTask?.cancel()
+        currentTask = nil
+        activeSpeechID = nil
+        SpeechSynthesizer.shared.stop()
+        isBargeInListening = false
+        activeReminder = nil
+        isVoicePreviewing = false
+        state = .idle
+        triggerVoiceWakeUp(transcript: transcript, identifier: identifier)
     }
 
     // MARK: - Cloud recognition
@@ -1004,6 +1047,7 @@ public final class AppState {
 
     private func cancelInteraction() {
         endCloudSession()
+        isBargeInListening = false
         // Invalidate IDs before cancelling work that can enqueue completion callbacks.
         conversationID = nil
         activeSpeechID = nil
@@ -1035,6 +1079,7 @@ public final class AppState {
         state = .idle
         isVoicePreviewing = false
         isFollowUpListening = false
+        isBargeInListening = false
         if deliverReminderIfPossible() { return }
         if startFollowUpListening() { return }
         allowsFollowUp = false
