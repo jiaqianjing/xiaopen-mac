@@ -90,6 +90,8 @@ public final class AppState {
     private var cloudRawTranscript = ""
     private var cloudFromVoiceWake = false
     private var cloudUnavailableUntil: TimeInterval = 0
+    /// The reply just spoken, to recognize the speaker's own voice coming back in follow-up.
+    private var lastSpokenReply = ""
     @ObservationIgnored private let logger = Logger(subsystem: "com.jiaqianjing.XiaoPen", category: "lifecycle")
 
     private init() {
@@ -477,6 +479,13 @@ public final class AppState {
         pauseCapture()
         let prompt = currentTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
         let meaningful = prompt.filter { $0.isLetter || $0.isNumber }
+        if isFollowUpListening, SelfEchoDetector.isEcho(prompt, of: lastSpokenReply) {
+            diagnose("继续倾听忽略的回声", prompt)
+            logger.notice("继续倾听：忽略疑似自身回声 characters=\(prompt.count)")
+            currentTranscript = ""
+            finishInteraction(delay: 1)
+            return
+        }
         // After a reply the microphone also hears other people; fragments are dropped.
         if isFollowUpListening, meaningful.count < 3 {
             if !prompt.isEmpty { diagnose("继续倾听忽略的片段", prompt) }
@@ -898,31 +907,41 @@ public final class AppState {
         guard allowsFollowUp, prefs.isFollowUpEnabled, permissionsGranted, speechBlockReason == nil,
               errorMessage == nil, !isPreparingAudio else { return false }
         allowsFollowUp = false
-        conversationID = UUID()
+        let conversation = UUID()
+        conversationID = conversation
         state = .listening
         isFollowUpListening = true
         followUpRewoken = false
+        lastSpokenReply = currentResponse
         transcriptHandoff.beginManual(initialQuery: "")
         currentTranscript = ""
         isHUDVisible = true
-        resumeCapture()
-        guard AudioEngineManager.shared.isRunning else {
-            state = .idle
-            conversationID = nil
-            isFollowUpListening = false
-            return false
-        }
         if let sound = NSSound(named: "Tink") {
             sound.volume = 0.35
             sound.play()
         }
-        _ = beginCloudListening(prerollSeconds: 0, fromVoiceWake: false)
         LLMConnectionWarmer.warm(prefs.activeEndpointURL)
-        endpointExtension = 0
-        scheduleVoiceExpiry(voiceEndpoint.begin(now: ProcessInfo.processInfo.systemUptime,
-                                                initialWaitDuration: prefs.followUpSeconds))
+        // The speaker's tail, the room and the chime must not be heard as the user's
+        // next question, so the microphone opens a moment after playback ends.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(Int(Self.followUpMicrophoneDelay * 1000)))
+            guard let self, self.conversationID == conversation, self.state == .listening,
+                  self.isFollowUpListening else { return }
+            self.resumeCapture()
+            guard AudioEngineManager.shared.isRunning else {
+                self.isFollowUpListening = false
+                self.finishInteraction(delay: 1)
+                return
+            }
+            _ = self.beginCloudListening(prerollSeconds: 0, fromVoiceWake: false)
+            self.endpointExtension = 0
+            self.scheduleVoiceExpiry(self.voiceEndpoint.begin(now: ProcessInfo.processInfo.systemUptime,
+                                                              initialWaitDuration: prefs.followUpSeconds))
+        }
         return true
     }
+
+    static let followUpMicrophoneDelay: TimeInterval = 0.5
 
     /// One shortcut for the whole conversation: start, send, or interrupt.
     public func toggleVoiceInteraction() {
