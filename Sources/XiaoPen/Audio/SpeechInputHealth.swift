@@ -14,7 +14,12 @@ struct SpeechInputSnapshot: Sendable {
     var bufferCount: UInt64 = 0
     var audioDuration: TimeInterval = 0
     var voicedDuration: TimeInterval = 0
+    /// Voiced audio within the last `recentWindow` seconds; isolated noises spread
+    /// over a long quiet standby never add up to a "stall".
+    var recentVoicedDuration: TimeInterval = 0
     var lastBufferUptime: TimeInterval?
+
+    static let recentWindow: TimeInterval = 12
 }
 
 enum SpeechInputStall: Sendable, Equatable {
@@ -42,14 +47,15 @@ enum SpeechInputStall: Sendable, Equatable {
     }
 }
 
-/// Silence is normal. A failure needs missing input, or enough voiced input without a result.
+/// Silence and occasional noise are normal. A failure needs missing input, or
+/// sustained recent sound (like someone talking) that produces no text at all.
 struct SpeechInputWatchdog: Sendable {
     let startupGrace: TimeInterval
     let minimumVoicedDuration: TimeInterval
     let missingBufferTimeout: TimeInterval
 
     init(startupGrace: TimeInterval = 15,
-         minimumVoicedDuration: TimeInterval = 2,
+         minimumVoicedDuration: TimeInterval = 4,
          missingBufferTimeout: TimeInterval = 5) {
         precondition(startupGrace > 0 && minimumVoicedDuration > 0 && missingBufferTimeout > 0)
         self.startupGrace = startupGrace
@@ -62,7 +68,7 @@ struct SpeechInputWatchdog: Sendable {
         guard now - sessionStartedAt >= startupGrace else { return nil }
         guard input.bufferCount > 0, let lastBuffer = input.lastBufferUptime else { return .noBuffers }
         if now - lastBuffer >= missingBufferTimeout { return .inputStopped }
-        if !hasReceivedTranscript, input.voicedDuration >= minimumVoicedDuration { return .noTranscription }
+        if !hasReceivedTranscript, input.recentVoicedDuration >= minimumVoicedDuration { return .noTranscription }
         return nil
     }
 }

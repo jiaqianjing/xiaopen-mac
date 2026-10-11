@@ -319,6 +319,14 @@ private struct IssueBanner: View {
     }
 }
 
+/// `Image(_:bundle:)` only searches asset catalogs; the mascot is a plain PNG resource.
+enum MascotImage {
+    static let image: Image = {
+        if let image = Bundle.module.image(forResource: "Mascot") { return Image(nsImage: image) }
+        return Image(systemName: "bubble.left.and.text.bubble.right.fill")
+    }()
+}
+
 /// The cushion mascot breathes while idle, follows the voice while listening,
 /// and bobs while thinking or speaking.
 struct MascotView: View {
@@ -329,7 +337,7 @@ struct MascotView: View {
     var body: some View {
         TimelineView(.animation(minimumInterval: 1 / 30, paused: state == .idle && level == 0)) { timeline in
             let time = timeline.date.timeIntervalSinceReferenceDate
-            Image("Mascot", bundle: .module)
+            MascotImage.image
                 .resizable().scaledToFit()
                 .frame(width: size, height: size)
                 .clipShape(RoundedRectangle(cornerRadius: size * 0.27, style: .continuous))
