@@ -8,6 +8,7 @@ private final class SpeechAudioRequestBridge: @unchecked Sendable {
     private let lock = NSLock()
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var input = SpeechInputSnapshot()
+    private var voicedHistory: [(uptime: TimeInterval, duration: TimeInterval)] = []
 
     func replace(with request: SFSpeechAudioBufferRecognitionRequest?) {
         lock.lock()
@@ -15,6 +16,7 @@ private final class SpeechAudioRequestBridge: @unchecked Sendable {
         self.request?.endAudio()
         self.request = request
         input = SpeechInputSnapshot()
+        voicedHistory.removeAll(keepingCapacity: true)
     }
 
     func append(_ buffer: AVAudioPCMBuffer) {
@@ -32,7 +34,8 @@ private final class SpeechAudioRequestBridge: @unchecked Sendable {
         let duration = Double(buffer.frameLength) / format.sampleRate
         input.bufferCount += 1
         input.audioDuration += duration
-        input.lastBufferUptime = ProcessInfo.processInfo.systemUptime
+        let now = ProcessInfo.processInfo.systemUptime
+        input.lastBufferUptime = now
         // The same first-channel energy that drives the waveform supplies a scalar
         // signal-presence estimate. No samples are retained and no logging runs here.
         if let samples = buffer.floatChannelData?[0] {
@@ -45,8 +48,16 @@ private final class SpeechAudioRequestBridge: @unchecked Sendable {
             let meanSquare = squareSum / Float(buffer.frameLength)
             if meanSquare.isFinite, meanSquare >= 0.0001 {
                 input.voicedDuration += duration
+                voicedHistory.append((now, duration))
             }
         }
+        let windowStart = now - SpeechInputSnapshot.recentWindow
+        if let firstRecent = voicedHistory.firstIndex(where: { $0.uptime >= windowStart }) {
+            if firstRecent > 0 { voicedHistory.removeFirst(firstRecent) }
+        } else {
+            voicedHistory.removeAll(keepingCapacity: true)
+        }
+        input.recentVoicedDuration = voicedHistory.reduce(0) { $0 + $1.duration }
         request.append(buffer)
     }
 
@@ -312,7 +323,16 @@ public final class SpeechRecognizer {
         guard let stall = inputWatchdog.failure(
             now: ProcessInfo.processInfo.systemUptime, sessionStartedAt: sessionStartedAt,
             input: input, hasReceivedTranscript: hasReceivedTranscript) else { return }
-        logger.error("识别输入 watchdog：session=\(sessionID.uuidString, privacy: .public), reason=\(stall.diagnosticName, privacy: .public), buffers=\(input.bufferCount), audioSeconds=\(input.audioDuration), voicedSeconds=\(input.voicedDuration)")
+        logger.error("识别输入 watchdog：session=\(sessionID.uuidString, privacy: .public), reason=\(stall.diagnosticName, privacy: .public), buffers=\(input.bufferCount), audioSeconds=\(input.audioDuration), voicedSeconds=\(input.voicedDuration), recentVoicedSeconds=\(input.recentVoicedDuration)")
+        if stall == .noTranscription {
+            // Music, a fan or a TV in another language are normal surroundings, not a
+            // broken recognizer. Restart quietly and never stop listening for them.
+            let exhausted = !inputRecoveryBudget.recordFailure()
+            finishCurrentSession(invalidateSession: false)
+            needsRecognizerReset = true
+            scheduleRestart(after: exhausted ? 30 : 1)
+            return
+        }
         let willRetry = inputRecoveryBudget.recordFailure()
         let failure = SpeechRecognitionFailure.inputStalled(stall)
         if !willRetry {
