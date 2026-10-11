@@ -54,6 +54,41 @@ public enum WakeWordDetector {
         return nil
     }
 
+    /// ASR often repeats the wake phrase's last syllable ("小喷小喷喷"); that stutter is not the question.
+    public static func strippingStutter(_ query: String, wakeWord: String) -> String {
+        guard let last = normalizedCharacters(in: wakeWord).last?.key else { return query }
+        var text = Substring(query)
+        while let first = text.first(where: { !$0.isWhitespace && !$0.isPunctuation }),
+              phoneticKey(for: first) == last {
+            text = text.drop(while: { $0.isWhitespace || $0.isPunctuation }).dropFirst()
+        }
+        return String(text).trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+    }
+
+    /// When a later hypothesis rewrites the wake phrase into something that no longer
+    /// matches ("小喷小喷" → "小鹏"), drop a leading run of characters that rhyme with it.
+    /// Returns nil unless at least two such characters lead the transcript.
+    public static func suffixAfterApproximateWake(_ transcript: String, wakeWord: String) -> String? {
+        let wakeKeys = normalizedCharacters(in: wakeWord).map(\.key)
+        guard wakeKeys.count >= 2, wakeKeys.allSatisfy({ $0.count >= 2 }) else { return nil }
+        let finals = Set(wakeKeys.map(pinyinFinal))
+        var consumed = 0
+        var index = transcript.startIndex
+        while index < transcript.endIndex, consumed < wakeKeys.count + 1 {
+            let character = transcript[index]
+            if character.isWhitespace || character.isPunctuation {
+                index = transcript.index(after: index)
+                continue
+            }
+            let key = phoneticKey(for: character)
+            guard key.count >= 2, finals.contains(pinyinFinal(key)) else { break }
+            consumed += 1
+            index = transcript.index(after: index)
+        }
+        guard consumed >= 2 else { return nil }
+        return String(transcript[index...]).trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+    }
+
     /// True when every syllable matches except one whose final (vowel part) still matches.
     static func differsByOneInitial(_ keys: [String], _ target: [String]) -> Bool {
         guard keys.count == target.count else { return false }

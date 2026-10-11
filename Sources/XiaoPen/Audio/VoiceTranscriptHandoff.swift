@@ -14,9 +14,10 @@ struct VoiceTranscriptHandoff: Sendable {
     /// A valid wake match may have an empty query when the user has only said the wake word.
     @discardableResult
     mutating func beginWake(transcript: String, wakeWord: String, sessionID: UUID) -> String? {
-        guard let query = WakeWordDetector.query(in: transcript, targetWakeWord: wakeWord, isEnabled: true) else {
+        guard let match = WakeWordDetector.query(in: transcript, targetWakeWord: wakeWord, isEnabled: true) else {
             return nil
         }
+        let query = WakeWordDetector.strippingStutter(match, wakeWord: wakeWord)
         reset()
         self.wakeWord = wakeWord
         currentSessionID = sessionID
@@ -55,10 +56,11 @@ struct VoiceTranscriptHandoff: Sendable {
         if let wakeWord {
             // Partial hypotheses can revise the wake word. Until it matches again,
             // preserve the last usable query instead of inserting the wake phrase.
-            guard let suffix = WakeWordDetector.query(in: transcript, targetWakeWord: wakeWord, isEnabled: true) else {
+            guard let suffix = WakeWordDetector.query(in: transcript, targetWakeWord: wakeWord, isEnabled: true)
+                    ?? WakeWordDetector.suffixAfterApproximateWake(transcript, wakeWord: wakeWord) else {
                 return nil
             }
-            newText = suffix
+            newText = WakeWordDetector.strippingStutter(suffix, wakeWord: wakeWord)
         } else {
             newText = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         }

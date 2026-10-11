@@ -80,6 +80,11 @@ public final class AppState {
     private var standbyRotationTask: Task<Void, Never>?
     private var recognitionStartedAt: TimeInterval?
     private var followUpRewoken = false
+    /// Microphone activity, used only to avoid cutting off a speaker whose words
+    /// the recognizer has not delivered yet.
+    private var noiseLevel: Float = 0.02
+    private var lastVoiceActivityAt: TimeInterval = 0
+    private var endpointExtension: TimeInterval = 0
     @ObservationIgnored private let logger = Logger(subsystem: "com.jiaqianjing.XiaoPen", category: "lifecycle")
 
     private init() {
@@ -98,6 +103,7 @@ public final class AppState {
             Task { @MainActor [weak self] in
                 guard let self, self.wantsAudioCapture, AudioEngineManager.shared.isRunning else { return }
                 self.audioLevel = level
+                self.noteVoiceActivity(level)
             }
         }
         audio.onStatusMessage = { [weak self] message in
@@ -202,6 +208,7 @@ public final class AppState {
                                 self.scheduleVoiceExpiry(self.voiceEndpoint.begin(now: ProcessInfo.processInfo.systemUptime))
                             } else if let expiry = self.voiceEndpoint.update(transcript: query, now: ProcessInfo.processInfo.systemUptime,
                                                                              likelyComplete: self.looksLikeCompleteRequest(query)) {
+                                self.endpointExtension = 0
                                 self.scheduleVoiceExpiry(expiry)
                             }
                         }
@@ -367,6 +374,7 @@ public final class AppState {
         }
         NSSound(named: "Tink")?.play()
         LLMConnectionWarmer.warm(AppPreferences.shared.activeEndpointURL)
+        endpointExtension = 0
         scheduleVoiceExpiry(voiceEndpoint.begin(now: ProcessInfo.processInfo.systemUptime, initialTranscript: initialQuery))
     }
 
@@ -394,6 +402,7 @@ public final class AppState {
         NSSound(named: "Tink")?.play()
         LLMConnectionWarmer.warm(AppPreferences.shared.activeEndpointURL)
         noteListeningProgress(query)
+        endpointExtension = 0
         scheduleVoiceExpiry(voiceEndpoint.begin(now: ProcessInfo.processInfo.systemUptime, initialTranscript: query))
     }
 
@@ -429,6 +438,14 @@ public final class AppState {
         isFinalizingSpeech = false
         pauseCapture()
         let prompt = currentTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        let meaningful = prompt.filter { $0.isLetter || $0.isNumber }
+        // After a reply the microphone also hears other people; fragments are dropped.
+        if isFollowUpListening, meaningful.count < 3 {
+            if !prompt.isEmpty { diagnose("继续倾听忽略的片段", prompt) }
+            currentTranscript = ""
+            finishInteraction(delay: 1)
+            return
+        }
         guard !prompt.isEmpty else {
             finishInteraction(delay: 1)
             return
@@ -758,6 +775,7 @@ public final class AppState {
             sound.play()
         }
         LLMConnectionWarmer.warm(prefs.activeEndpointURL)
+        endpointExtension = 0
         scheduleVoiceExpiry(voiceEndpoint.begin(now: ProcessInfo.processInfo.systemUptime,
                                                 initialWaitDuration: prefs.followUpSeconds))
         return true
@@ -892,6 +910,14 @@ public final class AppState {
         pauseCapture()
     }
 
+    private func noteVoiceActivity(_ level: Float) {
+        // The noise estimate follows quiet periods quickly and loud ones slowly.
+        noiseLevel += (level < noiseLevel * 2 ? 0.05 : 0.002) * (level - noiseLevel)
+        if level > max(0.05, noiseLevel * 3) {
+            lastVoiceActivityAt = ProcessInfo.processInfo.systemUptime
+        }
+    }
+
     private func scheduleVoiceExpiry(_ expiry: VoiceEndpointPolicy.Expiry) {
         silenceTimer?.invalidate()
         let identifier = conversationID
@@ -900,7 +926,16 @@ public final class AppState {
             Task { @MainActor [weak self] in
                 guard let self, self.state == .listening, self.conversationID == identifier,
                       self.voiceEndpoint.expiry?.generation == expiry.generation else { return }
-                if self.voiceEndpoint.isExpired(generation: expiry.generation, now: ProcessInfo.processInfo.systemUptime) {
+                let now = ProcessInfo.processInfo.systemUptime
+                if self.voiceEndpoint.isExpired(generation: expiry.generation, now: now) {
+                    // Still hearing the speaker: wait a little longer (bounded) for the text to catch up.
+                    if !self.currentTranscript.isEmpty, now - self.lastVoiceActivityAt < 0.4,
+                       self.endpointExtension < 2.5,
+                       let extended = self.voiceEndpoint.extend(now: now, by: 0.4) {
+                        self.endpointExtension += 0.4
+                        self.scheduleVoiceExpiry(extended)
+                        return
+                    }
                     self.stopListeningAndProcess()
                 } else {
                     self.scheduleVoiceExpiry(expiry)

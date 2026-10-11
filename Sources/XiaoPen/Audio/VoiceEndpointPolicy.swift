@@ -27,7 +27,8 @@ struct VoiceEndpointPolicy: Sendable {
                         initialWaitDuration: TimeInterval? = nil) -> Expiry {
         lastMeaningfulText = Self.meaningfulText(initialTranscript)
         let wait = max(0.5, initialWaitDuration ?? self.initialWaitDuration)
-        let duration = lastMeaningfulText.isEmpty ? wait : silenceDuration
+        // A single leftover character is recognizer residue, not the start of a question.
+        let duration = lastMeaningfulText.count < 2 ? wait : silenceDuration
         return arm(deadline: now + duration)
     }
 
@@ -38,9 +39,28 @@ struct VoiceEndpointPolicy: Sendable {
         let meaningfulText = Self.meaningfulText(transcript)
         guard !meaningfulText.isEmpty, meaningfulText != lastMeaningfulText else { return nil }
         lastMeaningfulText = meaningfulText
-        let pause = likelyComplete && meaningfulText.count >= 3 ? completeSilenceDuration : silenceDuration
+        let pause: TimeInterval
+        if likelyComplete && meaningfulText.count >= 3 {
+            pause = completeSilenceDuration
+        } else if meaningfulText.count < 4 {
+            // Two or three characters are usually the start of a sentence whose
+            // next words the recognizer has not delivered yet.
+            pause = shortQuerySilenceDuration
+        } else {
+            pause = silenceDuration
+        }
         return arm(deadline: now + pause)
     }
+
+    /// Text can lag behind speech, so the caller may push the deadline while the
+    /// microphone still hears the speaker. The caller bounds the total extension.
+    @discardableResult
+    mutating func extend(now: TimeInterval, by duration: TimeInterval) -> Expiry? {
+        guard expiry != nil, duration > 0 else { return nil }
+        return arm(deadline: now + duration)
+    }
+
+    let shortQuerySilenceDuration: TimeInterval = 1.8
 
     /// Sentence-final question particles; trailing periods are not trusted because
     /// partial transcripts can be punctuated before the speaker has finished.
