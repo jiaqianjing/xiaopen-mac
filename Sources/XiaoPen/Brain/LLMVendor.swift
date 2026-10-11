@@ -87,8 +87,13 @@ public enum LLMVendor: String, CaseIterable, Identifiable, Codable, Sendable {
         }
     }
 
-    func requestOptions(model: String, thinkingEnabled: Bool) -> OpenAIVendorOptions {
+    /// Platforms whose OpenAI-compatible chat endpoint can search the web by itself.
+    public var supportsWebSearch: Bool { self == .qianwen }
+
+    func requestOptions(model: String, thinkingEnabled: Bool, webSearch: Bool = false) -> OpenAIVendorOptions {
         var options = OpenAIVendorOptions()
+        // The model decides when to search; "turbo" is the platform's fastest strategy.
+        if webSearch, supportsWebSearch { options.enableSearch = true }
         switch thinkingControl(model: model) {
         case .enableThinkingFlag: options.enableThinking = thinkingEnabled
         case .thinkingType(let enabled): options.thinkingType = thinkingEnabled ? enabled : "disabled"
@@ -110,11 +115,14 @@ public struct OpenAIVendorOptions: Sendable, Equatable {
     public var enableThinking: Bool?
     public var thinkingType: String?
     public var reasoningSplit = false
+    public var enableSearch = false
 
-    public init(enableThinking: Bool? = nil, thinkingType: String? = nil, reasoningSplit: Bool = false) {
+    public init(enableThinking: Bool? = nil, thinkingType: String? = nil, reasoningSplit: Bool = false,
+                enableSearch: Bool = false) {
         self.enableThinking = enableThinking
         self.thinkingType = thinkingType
         self.reasoningSplit = reasoningSplit
+        self.enableSearch = enableSearch
     }
 
     var supportsThinkingToggle: Bool { enableThinking != nil || thinkingType != nil }
@@ -123,5 +131,9 @@ public struct OpenAIVendorOptions: Sendable, Equatable {
         if let enableThinking { payload["enable_thinking"] = enableThinking }
         if let thinkingType { payload["thinking"] = ["type": thinkingType] }
         if reasoningSplit { payload["reasoning_split"] = true }
+        if enableSearch {
+            payload["enable_search"] = true
+            payload["search_options"] = ["search_strategy": "turbo"]
+        }
     }
 }
