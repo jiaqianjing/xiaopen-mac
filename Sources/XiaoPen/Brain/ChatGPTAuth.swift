@@ -63,12 +63,18 @@ public final class ChatGPTAuth {
     }
 
     /// Stable, opaque per-installation identifier required by dynamic registration.
+    /// Accepted forms are `urn:uuid:`, a JWK thumbprint URI, or `did:key:`; a UUIDv4 URI is used here.
     private var hostID: String {
         let key = "chatgptHostID"
-        if let saved = UserDefaults.standard.string(forKey: key) { return saved }
-        let value = "xiaopen-" + UUID().uuidString.lowercased()
+        if let saved = UserDefaults.standard.string(forKey: key), Self.isValidHostID(saved) { return saved }
+        let value = "urn:uuid:" + UUID().uuidString.lowercased()
         UserDefaults.standard.set(value, forKey: key)
         return value
+    }
+
+    nonisolated static func isValidHostID(_ value: String) -> Bool {
+        if value.hasPrefix("urn:uuid:") { return UUID(uuidString: String(value.dropFirst(9))) != nil }
+        return value.hasPrefix("urn:ietf:params:oauth:jwk-thumbprint:") || value.hasPrefix("did:key:")
     }
 
     /// The client ID issued at first sign-in is reused for later sign-ins.
@@ -127,9 +133,10 @@ public final class ChatGPTAuth {
             URLQueryItem(name: "code_challenge", value: challenge),
             URLQueryItem(name: "code_challenge_method", value: "S256"),
         ]
+        // The same host ID is sent on every sign-in; the name hint only on first registration.
+        query.append(URLQueryItem(name: "ext_agent_host_id", value: hostID))
         if savedClientID == nil {
-            query += [URLQueryItem(name: "ext_agent_host_id", value: hostID),
-                      URLQueryItem(name: "agent_name_hint", value: "XiaoPen 小喷")]
+            query.append(URLQueryItem(name: "agent_name_hint", value: "XiaoPen"))
         }
         components.queryItems = query
         NSWorkspace.shared.open(components.url!)
