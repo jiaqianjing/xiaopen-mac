@@ -44,7 +44,7 @@ enum DiagnosticsExporter {
                      "版本：\(AppInfo.version) (\(AppInfo.build))",
                      "系统：\(ProcessInfo.processInfo.operatingSystemVersionString)",
                      "内存：\(ProcessInfo.processInfo.physicalMemory / 1_073_741_824) GB", ""]
-        lines.append("模型：\(prefs.providerType.rawValue) / \(prefs.providerType == .openAI ? prefs.openAIVendor.rawValue : "-") / \(currentModel(prefs))")
+        lines.append("模型：\(prefs.activeProviderID) / \(prefs.providerType.rawValue) / \(prefs.model) / \(URL(string: prefs.baseURL)?.host ?? "-")")
         lines.append("朗读：\(prefs.ttsEngine.rawValue)，唤醒词启用：\(prefs.isWakeWordEnabled)，继续倾听：\(prefs.isFollowUpEnabled)")
         lines.append("联网搜索：\(prefs.usesWebSearch)")
         lines.append("状态：\(AppState.shared.statusText)；\(AppState.shared.deviceStatus)；\(AppState.shared.recognitionStatus)")
@@ -72,14 +72,6 @@ enum DiagnosticsExporter {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         try? report().write(to: url, atomically: true, encoding: .utf8)
         NSWorkspace.shared.activateFileViewerSelecting([url])
-    }
-
-    private static func currentModel(_ prefs: AppPreferences) -> String {
-        switch prefs.providerType {
-        case .ollama: return prefs.ollamaModel
-        case .anthropic: return prefs.anthropicModel
-        case .openAI: return prefs.openAIModel
-        }
     }
 }
 

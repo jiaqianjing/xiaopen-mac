@@ -14,6 +14,9 @@ public struct SettingsView: View {
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
     @State private var launchAtLoginError: String?
     @State private var isModelInstalled = LocalSpeechWorker.isModelInstalled
+    @State private var cloudKeyMissing = false
+    @State private var cloudTestResult: String?
+    @State private var isTestingCloud = false
 
     public init() {}
 
@@ -36,6 +39,15 @@ public struct SettingsView: View {
             appState.refreshWakeSettings()
         }
         .onChange(of: prefs.isGlobalHotKeyEnabled) { _, enabled in GlobalHotKey.shared.setEnabled(enabled) }
+        .onChange(of: prefs.speechRecognitionMode) { _, _ in appState.refreshWakeSettings() }
+        .task(id: prefs.speechRecognitionMode) {
+            guard prefs.speechRecognitionMode == .cloud, let account = prefs.cloudASRKeyAccount else {
+                cloudKeyMissing = false
+                return
+            }
+            let key = (try? await prefs.readAPIKey(account: account)) ?? ""
+            cloudKeyMissing = key.isEmpty
+        }
         .onChange(of: prefs.usesAutomaticLocation) { _, enabled in if enabled { location.refresh() } }
         .onChange(of: installer.phase) { _, phase in
             if phase == .installed {
@@ -83,11 +95,57 @@ public struct SettingsView: View {
                     Text("建议 4 个字左右、叠词效果最好。同音字也能唤醒（例如“小盆小盆”）。关闭后待命时不采音，仍可用快捷键或菜单开始说话。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
+                Toggle("回声消除（推荐）", isOn: $prefs.isEchoCancellationEnabled)
+                    .onChange(of: prefs.isEchoCancellationEnabled) { _, _ in appState.refreshWakeSettings() }
+                Picker("回答时打断", selection: $prefs.bargeInMode) {
+                    Text("直接说话就能打断").tag(BargeInMode.natural)
+                    Text("说唤醒词才打断").tag(BargeInMode.wakeWord)
+                    Text("不打断").tag(BargeInMode.off)
+                }
+                .disabled(!prefs.isEchoCancellationEnabled || !prefs.isWakeWordEnabled)
+                Text("回声消除使用 macOS 的语音处理，从麦克风里去掉小喷自己的声音，并做降噪和自动增益，打断依赖它。“直接说话”会在听到人声时先压低音量并用云端识别确认，确认是你在说话才停下；需要云端识别。使用蓝牙耳机时会自动关闭。")
+                    .font(.footnote).foregroundStyle(.secondary)
                 Toggle("回答后继续听，不用再叫我", isOn: $prefs.isFollowUpEnabled)
                 if prefs.isFollowUpEnabled {
                     Slider(value: $prefs.followUpSeconds, in: 3...12, step: 1) {
                         Text("继续听 \(Int(prefs.followUpSeconds)) 秒")
                     }
+                }
+            }
+            Section("识别你说的问题") {
+                Picker("识别方式", selection: $prefs.speechRecognitionMode) {
+                    Text("云端识别（千问，更准）").tag(SpeechRecognitionMode.cloud)
+                    Text("本机识别（离线）").tag(SpeechRecognitionMode.local)
+                }
+                .pickerStyle(.radioGroup)
+                if prefs.speechRecognitionMode == .cloud {
+                    HStack {
+                        TextField("识别模型", text: $prefs.cloudASRModel)
+                        Menu("常用") {
+                            ForEach(AppPreferences.cloudASRModels, id: \.self) { model in
+                                Button(model) { prefs.cloudASRModel = model }
+                            }
+                        }
+                        .fixedSize()
+                    }
+                    if cloudKeyMissing {
+                        Label("需要先在“大脑”里选择千问 AI 平台并填写 API Key；没有密钥时会自动用本机识别。",
+                              systemImage: "key")
+                            .font(.footnote).foregroundStyle(.orange)
+                    }
+                    HStack {
+                        Button("测试云端识别") { testCloudRecognition() }
+                            .disabled(isTestingCloud)
+                        if isTestingCloud { ProgressView().controlSize(.small) }
+                        if let cloudTestResult {
+                            Text(cloudTestResult).font(.footnote).textSelection(.enabled)
+                        }
+                    }
+                    Text("唤醒词始终在本机识别。叫醒小喷后，从唤醒前约 2.5 秒开始的录音会实时发送到千问 AI 平台识别，直到你说完；按识别时长计费，以平台价格为准。网络或密钥有问题时自动改用本机识别。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                } else {
+                    Text("全部在这台 Mac 上识别，不上传录音；离麦克风较远或有噪音时准确率较低。")
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
             }
             Section("对话浮窗") {
@@ -103,7 +161,7 @@ public struct SettingsView: View {
                 if !appState.recognitionStatus.isEmpty {
                     Text(appState.recognitionStatus).font(.footnote).foregroundStyle(.secondary)
                 }
-                Text("语音识别完全在本机进行，需要在系统“键盘 → 听写”中开启普通话（中国大陆）。")
+                Text("唤醒词由本机识别，需要在系统“键盘 → 听写”中开启普通话（中国大陆）。")
                     .font(.footnote).foregroundStyle(.secondary)
                 HStack {
                     Button("重新检测") { Task { await appState.startEngine() } }
@@ -298,7 +356,18 @@ public struct SettingsView: View {
             Section("帮助与反馈") {
                 Button("重新打开使用引导") { OnboardingWindowController.shared.show() }
                 Button("导出诊断信息…") { DiagnosticsExporter.exportWithSavePanel() }
-                Text("诊断信息包含本次运行的日志和配置概要，不含对话内容和密钥，可以附在问题反馈里。")
+                if prefs.isTranscriptDiagnosticsActive, let until = prefs.transcriptDiagnosticsUntil {
+                    HStack {
+                        Text("正在记录识别文字，\(until.formatted(date: .omitted, time: .shortened)) 自动停止")
+                            .font(.footnote).foregroundStyle(.orange)
+                        Button("立即停止") { prefs.transcriptDiagnosticsUntil = nil }
+                    }
+                } else {
+                    Button("记录识别文字 30 分钟（排查唤醒和识别问题）") {
+                        prefs.transcriptDiagnosticsUntil = Date().addingTimeInterval(30 * 60)
+                    }
+                }
+                Text("诊断信息包含本次运行的日志和配置概要，不含密钥；只有开启“记录识别文字”的 30 分钟内，日志才会包含识别出的文字。")
                     .font(.footnote).foregroundStyle(.secondary)
                 Link("反馈问题", destination: AppInfo.issuesURL)
                 Link("隐私说明", destination: AppInfo.privacyURL)
@@ -306,6 +375,26 @@ public struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    private func testCloudRecognition() {
+        guard let account = prefs.cloudASRKeyAccount else { return }
+        isTestingCloud = true
+        cloudTestResult = nil
+        Task {
+            defer { isTestingCloud = false }
+            let key = (try? await prefs.readAPIKey(account: account)) ?? ""
+            guard !key.isEmpty else {
+                cloudTestResult = "没有千问 AI 平台的 API Key"
+                return
+            }
+            switch await CloudSpeechSelfTest.run(apiKey: key, model: prefs.cloudASRModel) {
+            case .success(let text):
+                cloudTestResult = text.isEmpty ? "连接成功，但没有识别出文字" : "说“\(CloudSpeechSelfTest.phrase)”，识别为“\(text)”"
+            case .failure(let error):
+                cloudTestResult = error.localizedDescription
+            }
+        }
     }
 
     private func openPrivacy(_ pane: String) {

@@ -27,7 +27,8 @@ struct VoiceEndpointPolicy: Sendable {
                         initialWaitDuration: TimeInterval? = nil) -> Expiry {
         lastMeaningfulText = Self.meaningfulText(initialTranscript)
         let wait = max(0.5, initialWaitDuration ?? self.initialWaitDuration)
-        let duration = lastMeaningfulText.isEmpty ? wait : silenceDuration
+        // A single leftover character is recognizer residue, not the start of a question.
+        let duration = lastMeaningfulText.count < 2 ? wait : silenceDuration
         return arm(deadline: now + duration)
     }
 
@@ -38,9 +39,28 @@ struct VoiceEndpointPolicy: Sendable {
         let meaningfulText = Self.meaningfulText(transcript)
         guard !meaningfulText.isEmpty, meaningfulText != lastMeaningfulText else { return nil }
         lastMeaningfulText = meaningfulText
-        let pause = likelyComplete && meaningfulText.count >= 3 ? completeSilenceDuration : silenceDuration
+        let pause: TimeInterval
+        if likelyComplete && meaningfulText.count >= 3 {
+            pause = completeSilenceDuration
+        } else if meaningfulText.count < 4 {
+            // Two or three characters are usually the start of a sentence whose
+            // next words the recognizer has not delivered yet.
+            pause = shortQuerySilenceDuration
+        } else {
+            pause = silenceDuration
+        }
         return arm(deadline: now + pause)
     }
+
+    /// Text can lag behind speech, so the caller may push the deadline while the
+    /// microphone still hears the speaker. The caller bounds the total extension.
+    @discardableResult
+    mutating func extend(now: TimeInterval, by duration: TimeInterval) -> Expiry? {
+        guard expiry != nil, duration > 0 else { return nil }
+        return arm(deadline: now + duration)
+    }
+
+    let shortQuerySilenceDuration: TimeInterval = 1.8
 
     /// Sentence-final question particles; trailing periods are not trusted because
     /// partial transcripts can be punctuated before the speaker has finished.
@@ -73,5 +93,36 @@ struct VoiceEndpointPolicy: Sendable {
     private static func meaningfulText(_ text: String) -> String {
         let folded = text.folding(options: [.caseInsensitive, .widthInsensitive], locale: Locale(identifier: "en_US_POSIX"))
         return String(folded.filter { $0.isLetter || $0.isNumber })
+    }
+}
+
+/// Recognizes the assistant's own reply picked up by the microphone: the transcript
+/// is mostly a contiguous piece of what was just spoken.
+enum SelfEchoDetector {
+    static func isEcho(_ transcript: String, of reply: String) -> Bool {
+        let heard = Array(normalized(transcript))
+        let spoken = Array(normalized(reply))
+        guard heard.count >= 3, !spoken.isEmpty else { return false }
+        return Double(longestCommonRun(heard, spoken)) >= Double(heard.count) * 0.6
+    }
+
+    private static func normalized(_ text: String) -> String {
+        text.folding(options: [.caseInsensitive, .widthInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+            .filter { $0.isLetter || $0.isNumber }
+    }
+
+    /// Longest common substring length (both inputs are a few hundred characters at most).
+    private static func longestCommonRun(_ a: [Character], _ b: [Character]) -> Int {
+        var previous = [Int](repeating: 0, count: b.count + 1)
+        var best = 0
+        for i in 1...a.count {
+            var current = [Int](repeating: 0, count: b.count + 1)
+            for j in 1...b.count where a[i - 1] == b[j - 1] {
+                current[j] = previous[j - 1] + 1
+                best = max(best, current[j])
+            }
+            previous = current
+        }
+        return best
     }
 }

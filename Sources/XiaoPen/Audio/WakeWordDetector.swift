@@ -19,9 +19,14 @@ public enum WakeWordDetector {
         let source = normalizedCharacters(in: transcript)
         guard !target.isEmpty, source.count >= target.count else { return nil }
 
+        // Exact (phonetic) matches first; then, for Chinese phrases of four or more
+        // syllables, allow one syllable whose initial was misheard (喷→芬/本).
+        let tolerant = target.count >= 4 && target.allSatisfy { $0.count >= 2 }
+        for pass in tolerant ? [false, true] : [false] {
         for offset in 0...(source.count - target.count) {
             let endOffset = offset + target.count
-            guard source[offset..<endOffset].map(\.key) == target else { continue }
+            let keys = source[offset..<endOffset].map(\.key)
+            guard pass ? Self.differsByOneInitial(keys, target) : keys == target else { continue }
 
             // Case folding can expand one character (for example ß -> ss).
             // Accept matches only at complete original-character boundaries.
@@ -45,7 +50,62 @@ public enum WakeWordDetector {
                 in: .whitespacesAndNewlines.union(.punctuationCharacters)
             )
         }
+        }
         return nil
+    }
+
+    /// ASR often repeats the wake phrase's last syllable ("小喷小喷喷"); that stutter is not the question.
+    public static func strippingStutter(_ query: String, wakeWord: String) -> String {
+        guard let last = normalizedCharacters(in: wakeWord).last?.key else { return query }
+        var text = Substring(query)
+        while let first = text.first(where: { !$0.isWhitespace && !$0.isPunctuation }),
+              phoneticKey(for: first) == last {
+            text = text.drop(while: { $0.isWhitespace || $0.isPunctuation }).dropFirst()
+        }
+        return String(text).trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+    }
+
+    /// When a later hypothesis rewrites the wake phrase into something that no longer
+    /// matches ("小喷小喷" → "小鹏"), drop a leading run of characters that rhyme with it.
+    /// Returns nil unless at least two such characters lead the transcript.
+    public static func suffixAfterApproximateWake(_ transcript: String, wakeWord: String) -> String? {
+        let wakeKeys = normalizedCharacters(in: wakeWord).map(\.key)
+        guard wakeKeys.count >= 2, wakeKeys.allSatisfy({ $0.count >= 2 }) else { return nil }
+        let finals = Set(wakeKeys.map(pinyinFinal))
+        var consumed = 0
+        var index = transcript.startIndex
+        while index < transcript.endIndex, consumed < wakeKeys.count + 1 {
+            let character = transcript[index]
+            if character.isWhitespace || character.isPunctuation {
+                index = transcript.index(after: index)
+                continue
+            }
+            let key = phoneticKey(for: character)
+            guard key.count >= 2, finals.contains(pinyinFinal(key)) else { break }
+            consumed += 1
+            index = transcript.index(after: index)
+        }
+        guard consumed >= 2 else { return nil }
+        return String(transcript[index...]).trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+    }
+
+    /// True when every syllable matches except one whose final (vowel part) still matches.
+    static func differsByOneInitial(_ keys: [String], _ target: [String]) -> Bool {
+        guard keys.count == target.count else { return false }
+        var mismatches = 0
+        for (key, expected) in zip(keys, target) where key != expected {
+            mismatches += 1
+            guard mismatches <= 1, key.count >= 2, pinyinFinal(key) == pinyinFinal(expected),
+                  !pinyinFinal(key).isEmpty else { return false }
+        }
+        return mismatches == 1
+    }
+
+    private static func pinyinFinal(_ key: String) -> String {
+        let initials: Set<Character> = ["b", "p", "m", "f", "d", "t", "n", "l", "g", "k", "h", "j", "q", "x",
+                                        "z", "c", "s", "r", "y", "w"]
+        guard let first = key.first, initials.contains(first) else { return key }
+        return String(key.dropFirst())
     }
 
     private static func isLatinLetterOrNumber(_ character: Character) -> Bool {

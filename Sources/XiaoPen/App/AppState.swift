@@ -80,6 +80,29 @@ public final class AppState {
     private var standbyRotationTask: Task<Void, Never>?
     private var recognitionStartedAt: TimeInterval?
     private var followUpRewoken = false
+    /// Microphone activity, used only to avoid cutting off a speaker whose words
+    /// the recognizer has not delivered yet.
+    private var noiseLevel: Float = 0.02
+    private var lastVoiceActivityAt: TimeInterval = 0
+    private var endpointExtension: TimeInterval = 0
+    /// Cloud recognition of the question (the wake word itself is always local).
+    private var cloudSession: CloudSpeechSession?
+    private var cloudRawTranscript = ""
+    private var cloudFromVoiceWake = false
+    private var cloudUnavailableUntil: TimeInterval = 0
+    /// The reply just spoken, to recognize the speaker's own voice coming back in follow-up.
+    private var lastSpokenReply = ""
+    /// Listening for the wake word while a reply is being prepared or spoken.
+    private var isBargeInListening = false
+    /// Natural barge-in: a short cloud session that checks whether the voice heard
+    /// during a reply is really the user before the reply is stopped.
+    private var bargeProbe: CloudSpeechSession?
+    private var bargeProbeTimeout: Task<Void, Never>?
+    private var speechRun = 0
+    private var speakingNoise: Float = 0.02
+    private var probeCooldownUntil: TimeInterval = 0
+    /// The interrupted reply, to drop the question if it is really our own voice.
+    private var echoReference: String?
     @ObservationIgnored private let logger = Logger(subsystem: "com.jiaqianjing.XiaoPen", category: "lifecycle")
 
     private init() {
@@ -93,11 +116,16 @@ public final class AppState {
     private func setupAudioPipeline() {
         let audio = AudioEngineManager.shared
         let recognition = SpeechRecognizer.shared
-        audio.onAudioBuffer = { buffer in recognition.appendAudioBuffer(buffer) }
+        audio.onAudioBuffer = { buffer in
+            recognition.appendAudioBuffer(buffer)
+            CloudAudioTap.shared.append(buffer)
+        }
+        CloudAudioTap.shared.setEnabled(AppPreferences.shared.speechRecognitionMode == .cloud)
         audio.onAudioLevel = { [weak self] level in
             Task { @MainActor [weak self] in
                 guard let self, self.wantsAudioCapture, AudioEngineManager.shared.isRunning else { return }
                 self.audioLevel = level
+                self.noteVoiceActivity(level)
             }
         }
         audio.onStatusMessage = { [weak self] message in
@@ -184,6 +212,10 @@ public final class AppState {
                             self.stopListeningAndProcess(finalResultAvailable: true)
                         }
                     }
+                } else if self.state == .thinking || self.state == .speaking {
+                    if self.isBargeInListening {
+                        self.bargeInIfWakeWordHeard(transcript: transcript, identifier: identifier)
+                    }
                 } else if self.state == .listening {
                     if var query = self.transcriptHandoff.update(transcript: transcript, sessionID: identifier, isFinal: isFinal) {
                         if self.isFollowUpListening, let stripped = self.strippingWakeWord(from: query) {
@@ -202,6 +234,7 @@ public final class AppState {
                                 self.scheduleVoiceExpiry(self.voiceEndpoint.begin(now: ProcessInfo.processInfo.systemUptime))
                             } else if let expiry = self.voiceEndpoint.update(transcript: query, now: ProcessInfo.processInfo.systemUptime,
                                                                              likelyComplete: self.looksLikeCompleteRequest(query)) {
+                                self.endpointExtension = 0
                                 self.scheduleVoiceExpiry(expiry)
                             }
                         }
@@ -225,6 +258,11 @@ public final class AppState {
             Task { @MainActor [weak self] in
                 guard let self, self.activeSpeechID == identifier, self.conversationID != nil else { return }
                 self.activeSpeechID = nil
+                // The user started talking just as the reply ended: keep listening to them.
+                if let probe = self.bargeProbe {
+                    self.commitBargeIn(probe, raw: probe.transcript)
+                    return
+                }
                 self.finishInteraction()
             }
         }
@@ -285,6 +323,8 @@ public final class AppState {
     }
 
     public func refreshWakeSettings() {
+        CloudAudioTap.shared.setEnabled(AppPreferences.shared.speechRecognitionMode == .cloud)
+        AudioEngineManager.shared.prefersEchoCancellation = AppPreferences.shared.isEchoCancellationEnabled
         guard state == .idle else { return }
         let prefs = AppPreferences.shared
         guard permissionsGranted else { return }
@@ -323,11 +363,13 @@ public final class AppState {
         guard wantsAudioCapture, AudioEngineManager.shared.isRunning,
               state == .idle || state == .listening else { return }
         if let identifier = activeRecognitionID, SpeechRecognizer.shared.currentSessionID == identifier { return }
+        if state == .listening, cloudSession != nil { return }
         let word = state == .idle ? AppPreferences.shared.wakeWord : ""
         activeRecognitionID = SpeechRecognizer.shared.startRecognition(wakeWord: word)
     }
 
     private func pauseCapture() {
+        endCloudSession()
         standbyRotationTask?.cancel()
         standbyRotationTask = nil
         wantsAudioCapture = false
@@ -367,6 +409,8 @@ public final class AppState {
         }
         NSSound(named: "Tink")?.play()
         LLMConnectionWarmer.warm(AppPreferences.shared.activeEndpointURL)
+        _ = beginCloudListening(prerollSeconds: 0, fromVoiceWake: false)
+        endpointExtension = 0
         scheduleVoiceExpiry(voiceEndpoint.begin(now: ProcessInfo.processInfo.systemUptime, initialTranscript: initialQuery))
     }
 
@@ -388,11 +432,15 @@ public final class AppState {
         isHUDVisible = true
         standbyRotationTask?.cancel()
         voiceWakeCount += 1
+        diagnose("唤醒时识别文字", transcript)
         let sessionSeconds = recognitionStartedAt.map { ProcessInfo.processInfo.systemUptime - $0 } ?? -1
         logger.notice("自定义唤醒词匹配成功 · 保留当前识别会话：sessionSeconds=\(sessionSeconds), transcriptLength=\(transcript.count)")
         NSSound(named: "Tink")?.play()
         LLMConnectionWarmer.warm(AppPreferences.shared.activeEndpointURL)
+        // The pre-roll covers the wake phrase and anything said right after it.
+        _ = beginCloudListening(prerollSeconds: 2.5, fromVoiceWake: true)
         noteListeningProgress(query)
+        endpointExtension = 0
         scheduleVoiceExpiry(voiceEndpoint.begin(now: ProcessInfo.processInfo.systemUptime, initialTranscript: query))
     }
 
@@ -407,6 +455,24 @@ public final class AppState {
         }
         guard !isFinalizingSpeech else { return }
         isFinalizingSpeech = true
+        if let session = cloudSession {
+            CloudAudioTap.shared.detach()
+            wantsAudioCapture = false
+            AudioEngineManager.shared.stop()
+            audioLevel = 0
+            let identifier = conversationID
+            finalTranscriptTask = Task { @MainActor [weak self] in
+                let raw = await session.finish()
+                guard let self, !Task.isCancelled, self.conversationID == identifier,
+                      self.state == .listening, self.isFinalizingSpeech else { return }
+                if !raw.isEmpty {
+                    self.cloudRawTranscript = raw
+                    self.currentTranscript = self.cloudQuery(from: raw)
+                }
+                self.processFinalTranscript()
+            }
+            return
+        }
         // Stop new samples while retaining this request's final hypothesis briefly.
         // A local recognizer may revise its partial after endAudio/finish.
         wantsAudioCapture = false
@@ -426,16 +492,40 @@ public final class AppState {
         finalTranscriptTask?.cancel()
         finalTranscriptTask = nil
         isFinalizingSpeech = false
+        // Cloud text is already stripped of the wake phrase and pre-roll; the local
+        // handoff keeps the full transcript that system commands must validate.
+        let usedCloud = cloudSession != nil
+        let systemInput = usedCloud ? nil : transcriptHandoff.rawSystemCommandTranscript
+        if usedCloud { diagnose("云端识别原文", cloudRawTranscript) }
         pauseCapture()
         let prompt = currentTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        let meaningful = prompt.filter { $0.isLetter || $0.isNumber }
+        let reference = isFollowUpListening ? lastSpokenReply : echoReference
+        echoReference = nil
+        if let reference, SelfEchoDetector.isEcho(prompt, of: reference) {
+            diagnose("继续倾听忽略的回声", prompt)
+            logger.notice("继续倾听：忽略疑似自身回声 characters=\(prompt.count)")
+            currentTranscript = ""
+            finishInteraction(delay: 1)
+            return
+        }
+        // After a reply the microphone also hears other people; fragments are dropped.
+        if isFollowUpListening, meaningful.count < 3 {
+            if !prompt.isEmpty { diagnose("继续倾听忽略的片段", prompt) }
+            currentTranscript = ""
+            finishInteraction(delay: 1)
+            return
+        }
         guard !prompt.isEmpty else {
             finishInteraction(delay: 1)
             return
         }
         state = .thinking
         logger.notice("语音输入结束：characters=\(prompt.count)")
+        diagnose("提交的问题", prompt)
         deviceStatus = "回复期间麦克风已暂停"
-        processPrompt(prompt, systemInput: transcriptHandoff.rawSystemCommandTranscript, isVoiceInput: true)
+        startBargeInListening()
+        processPrompt(prompt, systemInput: systemInput, isVoiceInput: true)
     }
 
     public func sendText(_ text: String) {
@@ -451,6 +541,7 @@ public final class AppState {
         state = .thinking
         deviceStatus = "回复期间麦克风已暂停"
         isHUDVisible = true
+        startBargeInListening()
         processPrompt(prompt)
     }
 
@@ -478,26 +569,13 @@ public final class AppState {
         allowsFollowUp = isVoiceInput
         let prefs = AppPreferences.shared
         let selectedProvider = prefs.providerType
-        let requestOptions = prefs.openAIRequestOptions
-        let keyAccount = prefs.apiKeyAccount(for: selectedProvider)
-        let baseURL: String
-        let model: String
-        let configuration: [String]
-        switch selectedProvider {
-        case .ollama:
-            baseURL = prefs.ollamaBaseURL
-            model = prefs.ollamaModel
-            configuration = [prefs.providerType.rawValue, prefs.ollamaBaseURL, prefs.ollamaModel, prefs.systemPrompt]
-        case .anthropic:
-            baseURL = ""
-            model = prefs.anthropicModel
-            configuration = [prefs.providerType.rawValue, prefs.anthropicModel, prefs.systemPrompt]
-        case .openAI:
-            baseURL = prefs.openAIBaseURL
-            model = prefs.openAIModel
-            configuration = [prefs.providerType.rawValue, prefs.openAIBaseURL, prefs.openAIModel, prefs.systemPrompt,
+        let requestOptions = prefs.requestOptions
+        let thinkingEnabled = prefs.thinkingEnabled
+        let keyAccount = prefs.currentKeyAccount
+        let baseURL = prefs.baseURL
+        let model = prefs.model
+        let configuration = [prefs.activeProviderID, selectedProvider.rawValue, baseURL, model, prefs.systemPrompt,
                              String(describing: requestOptions)]
-        }
         if configuration != historyConfiguration {
             history.clear()
             historyConfiguration = configuration
@@ -505,6 +583,14 @@ public final class AppState {
         replySubmittedAt = ProcessInfo.processInfo.systemUptime
         if processSystemVolumePrompt(userText, systemInput: systemInput) { return }
         if processReminderPrompt(userText) { return }
+        if model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            hasModelError = true
+            errorMessage = selectedProvider == .chatGPT
+                ? "还没有选择 ChatGPT 模型，请在设置 → 大脑中登录并选择模型。"
+                : "还没有填写模型名称，请在设置 → 大脑中选择模型。"
+            finishInteraction()
+            return
+        }
         let messages = history.messages(adding: userText)
         let systemPrompt = prefs.systemPrompt + AssistantContext.systemPromptSuffix
             + (selectedProvider == .openAI && requestOptions.enableSearch ? AssistantContext.webSearchSuffix : "")
@@ -529,12 +615,9 @@ public final class AppState {
                 requestMessages[requestMessages.count - 1] = ChatMessage(
                     role: "user", content: AssistantContext.decorate(userText, now: Date(), city: city, extra: [extra])
                 )
-                let provider: any LLMProviderProtocol
-                switch selectedProvider {
-                case .ollama: provider = OllamaProvider(baseURL: baseURL, model: model)
-                case .anthropic: provider = AnthropicProvider(apiKey: apiKey, model: model)
-                case .openAI: provider = OpenAIProvider(baseURL: baseURL, apiKey: apiKey, model: model, options: requestOptions)
-                }
+                let provider = LLMProviderFactory.make(protocolType: selectedProvider, baseURL: baseURL,
+                                                       model: model, apiKey: apiKey, options: requestOptions,
+                                                       thinkingEnabled: thinkingEnabled)
                 self.logger.notice("模型请求开始：provider=\(selectedProvider.rawValue, privacy: .public), model=\(model, privacy: .public)")
                 let requestStartedAt = ProcessInfo.processInfo.systemUptime
                 let stream = try await provider.streamChat(messages: requestMessages, systemPrompt: systemPrompt)
@@ -660,6 +743,7 @@ public final class AppState {
         // A follow-up lets the user say "再过五分钟" without the wake word.
         allowsFollowUp = permissionsGranted
         NSSound(named: "Glass")?.play()
+        startBargeInListening()
         activeSpeechID = SpeechSynthesizer.shared.speak(text: currentResponse, rate: AppPreferences.shared.ttsVoiceRate)
         return true
     }
@@ -680,7 +764,260 @@ public final class AppState {
         ReminderStore.shared.remove(reminder)
     }
 
+    // MARK: - Barge-in
+
+    /// With echo cancellation the microphone no longer hears the reply, so it can stay
+    /// open: the wake word then interrupts the reply like on a smart speaker.
+    private func startBargeInListening() {
+        let prefs = AppPreferences.shared
+        guard prefs.isBargeInEnabled, prefs.isEchoCancellationEnabled, prefs.isWakeWordEnabled,
+              WakeWordDetector.isValid(prefs.wakeWord), permissionsGranted, speechBlockReason == nil else { return }
+        AudioEngineManager.shared.prefersEchoCancellation = true
+        do { try AudioEngineManager.shared.startForPlayback() } catch { return }
+        guard AudioEngineManager.shared.isEchoCancelling else { return }
+        wantsAudioCapture = true
+        isBargeInListening = true
+        speechRun = 0
+        speakingNoise = 0.02
+        activeRecognitionID = SpeechRecognizer.shared.startRecognition(wakeWord: prefs.wakeWord)
+        deviceStatus = "回复中 · 说“\(prefs.wakeWord)”可以打断"
+    }
+
+    private func bargeInIfWakeWordHeard(transcript: String, identifier: UUID) {
+        let wakeWord = AppPreferences.shared.wakeWord
+        guard WakeWordDetector.query(in: transcript, targetWakeWord: wakeWord, isEnabled: true) != nil else { return }
+        logger.notice("语音打断：停止当前回答")
+        diagnose("打断时识别文字", transcript)
+        endBargeProbe(rejected: false)
+        currentTask?.cancel()
+        currentTask = nil
+        activeSpeechID = nil
+        SpeechSynthesizer.shared.stop()
+        isBargeInListening = false
+        activeReminder = nil
+        isVoicePreviewing = false
+        state = .idle
+        triggerVoiceWakeUp(transcript: transcript, identifier: identifier)
+    }
+
+    /// Sustained voice above the residual level while replying starts a confirmation.
+    private func detectNaturalBargeIn(_ level: Float) {
+        let prefs = AppPreferences.shared
+        guard isBargeInListening, state == .thinking || state == .speaking, bargeProbe == nil,
+              prefs.bargeInMode == .natural, prefs.speechRecognitionMode == .cloud,
+              AudioEngineManager.shared.isEchoCancelling else { return }
+        if level > max(0.06, speakingNoise * 4) {
+            speechRun += 1
+        } else {
+            speechRun = max(0, speechRun - 1)
+            speakingNoise += 0.05 * (level - speakingNoise)
+        }
+        // Capture buffers arrive about every 100 ms: three loud ones are ~0.3 s of voice.
+        if speechRun >= 3, ProcessInfo.processInfo.systemUptime >= probeCooldownUntil {
+            speechRun = 0
+            startBargeInProbe()
+        }
+    }
+
+    private func startBargeInProbe() {
+        let prefs = AppPreferences.shared
+        guard let account = prefs.cloudASRKeyAccount else { return }
+        let box = CloudSessionBox()
+        let probe = CloudSpeechSession(model: prefs.cloudASRModel) { [weak self] event in
+            Task { @MainActor [weak self] in self?.handleProbeEvent(event, sessionID: box.id) }
+        }
+        box.id = probe.id
+        bargeProbe = probe
+        logger.notice("说话打断：听到人声，正在确认")
+        // Duck the reply while checking, so the user can hear they were noticed.
+        AudioEngineManager.shared.speechPlayer.volume = 0.3
+        CloudAudioTap.shared.attach(probe, prerollSeconds: 1.0)
+        Task { [weak self] in
+            let key = (try? await prefs.readAPIKey(account: account)) ?? ""
+            guard let self, self.bargeProbe === probe else { return }
+            guard !key.isEmpty else {
+                self.endBargeProbe(rejected: true)
+                return
+            }
+            probe.connect(apiKey: key)
+        }
+        bargeProbeTimeout = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(1800))
+            guard let self, !Task.isCancelled, self.bargeProbe === probe else { return }
+            self.logger.notice("说话打断：未确认，继续回答")
+            self.endBargeProbe(rejected: true)
+        }
+    }
+
+    private func handleProbeEvent(_ event: CloudSpeechSession.Event, sessionID: UUID?) {
+        // After a confirmed barge-in the probe has become the listening session.
+        if let session = cloudSession, session.id == sessionID, let conversation = conversationID {
+            handleCloudEvent(event, conversation: conversation)
+            return
+        }
+        guard let probe = bargeProbe, probe.id == sessionID else { return }
+        switch event {
+        case .transcript(let raw, _):
+            if Self.isLikelyUserSpeech(raw, reply: currentResponse) {
+                commitBargeIn(probe, raw: raw)
+            }
+        case .failed:
+            endBargeProbe(rejected: true)
+        }
+    }
+
+    /// Words of the user, not a residue of the reply being played.
+    static func isLikelyUserSpeech(_ raw: String, reply: String) -> Bool {
+        let heard = raw.filter { $0.isLetter || $0.isNumber }
+        guard heard.count >= 2 else { return false }
+        let spoken = reply.filter { $0.isLetter || $0.isNumber }
+        return !spoken.contains(heard) && !SelfEchoDetector.isEcho(raw, of: reply)
+    }
+
+    private func commitBargeIn(_ probe: CloudSpeechSession, raw: String) {
+        logger.notice("说话打断：确认，停止当前回答")
+        let reply = currentResponse
+        bargeProbeTimeout?.cancel()
+        bargeProbeTimeout = nil
+        bargeProbe = nil
+        AudioEngineManager.shared.speechPlayer.volume = 1
+        currentTask?.cancel()
+        currentTask = nil
+        activeSpeechID = nil
+        SpeechSynthesizer.shared.stop()
+        isBargeInListening = false
+        activeRecognitionID = nil
+        SpeechRecognizer.shared.stopRecognition()
+        activeReminder = nil
+        isVoicePreviewing = false
+        conversationID = UUID()
+        state = .listening
+        isFollowUpListening = false
+        echoReference = reply
+        transcriptHandoff.beginManual(initialQuery: "")
+        cloudSession = probe
+        cloudFromVoiceWake = false
+        cloudRawTranscript = raw
+        let query = cloudQuery(from: raw)
+        currentTranscript = query
+        currentResponse = ""
+        isHUDVisible = true
+        endpointExtension = 0
+        scheduleVoiceExpiry(voiceEndpoint.begin(now: ProcessInfo.processInfo.systemUptime, initialTranscript: query))
+    }
+
+    private func endBargeProbe(rejected: Bool) {
+        guard let probe = bargeProbe else { return }
+        bargeProbeTimeout?.cancel()
+        bargeProbeTimeout = nil
+        bargeProbe = nil
+        CloudAudioTap.shared.detach()
+        probe.cancel()
+        AudioEngineManager.shared.speechPlayer.volume = 1
+        if rejected { probeCooldownUntil = ProcessInfo.processInfo.systemUptime + 1.5 }
+    }
+
+    // MARK: - Cloud recognition
+
+    /// Hands the rest of this turn to cloud recognition. Returns false (local recognition
+    /// continues) when cloud mode is off or recently failed.
+    private func beginCloudListening(prerollSeconds: Double, fromVoiceWake: Bool) -> Bool {
+        let prefs = AppPreferences.shared
+        guard prefs.speechRecognitionMode == .cloud, let account = prefs.cloudASRKeyAccount,
+              ProcessInfo.processInfo.systemUptime >= cloudUnavailableUntil,
+              state == .listening, let conversation = conversationID else { return false }
+        endCloudSession()
+        let session = CloudSpeechSession(model: prefs.cloudASRModel) { [weak self] event in
+            Task { @MainActor [weak self] in self?.handleCloudEvent(event, conversation: conversation) }
+        }
+        cloudSession = session
+        cloudRawTranscript = ""
+        cloudFromVoiceWake = fromVoiceWake
+        activeRecognitionID = nil
+        SpeechRecognizer.shared.stopRecognition()
+        CloudAudioTap.shared.attach(session, prerollSeconds: prerollSeconds)
+        Task { [weak self] in
+            let key = (try? await prefs.readAPIKey(account: account)) ?? ""
+            guard let self, self.cloudSession === session else { return }
+            guard !key.isEmpty else {
+                self.fallBackToLocalRecognition("还没有千问 AI 平台的 API Key，本次改用本机识别。")
+                return
+            }
+            session.connect(apiKey: key)
+        }
+        return true
+    }
+
+    private func handleCloudEvent(_ event: CloudSpeechSession.Event, conversation: UUID) {
+        guard conversationID == conversation, cloudSession != nil, state == .listening else { return }
+        switch event {
+        case .transcript(let raw, let sentenceEnded):
+            cloudRawTranscript = raw
+            let query = cloudQuery(from: raw)
+            guard !isFinalizingSpeech else { return }
+            currentTranscript = query
+            noteListeningProgress(query)
+            let now = ProcessInfo.processInfo.systemUptime
+            let complete = looksLikeCompleteRequest(query)
+            if let expiry = voiceEndpoint.update(transcript: query, now: now, likelyComplete: complete) {
+                endpointExtension = 0
+                scheduleVoiceExpiry(expiry)
+            }
+            // The service's own end-of-sentence is a strong signal once there is a real question.
+            if sentenceEnded, complete || query.filter({ $0.isLetter || $0.isNumber }).count >= 4 {
+                stopListeningAndProcess()
+            }
+        case .failed(let message):
+            guard !isFinalizingSpeech else { return }
+            if currentTranscript.isEmpty {
+                fallBackToLocalRecognition("\(message)。本次改用本机识别。")
+            } else {
+                stopListeningAndProcess()
+            }
+        }
+    }
+
+    /// The question part of a cloud transcript: after the wake phrase when one is present.
+    private func cloudQuery(from raw: String) -> String {
+        let wakeWord = AppPreferences.shared.wakeWord
+        if WakeWordDetector.isValid(wakeWord),
+           let query = WakeWordDetector.query(in: raw, targetWakeWord: wakeWord, isEnabled: true) {
+            return WakeWordDetector.strippingStutter(query, wakeWord: wakeWord)
+        }
+        if cloudFromVoiceWake {
+            if let query = WakeWordDetector.suffixAfterApproximateWake(raw, wakeWord: wakeWord) {
+                return WakeWordDetector.strippingStutter(query, wakeWord: wakeWord)
+            }
+            return WakeWordDetector.strippingStutter(raw, wakeWord: wakeWord)
+        }
+        return raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func fallBackToLocalRecognition(_ reason: String) {
+        logger.notice("云端识别改为本机：\(reason, privacy: .public)")
+        endCloudSession()
+        // Avoid a slow failed connection on every turn while the network is down.
+        cloudUnavailableUntil = ProcessInfo.processInfo.systemUptime + 60
+        recognitionStatus = reason
+        transcriptHandoff.beginManual(initialQuery: currentTranscript)
+        activeRecognitionID = nil
+        startRecognitionForCurrentState()
+    }
+
+    private func endCloudSession() {
+        guard let session = cloudSession else { return }
+        CloudAudioTap.shared.detach()
+        session.cancel()
+        cloudSession = nil
+    }
+
     // MARK: - Listening helpers
+
+    /// Recognized text is logged only while the user has turned on time-limited diagnostics.
+    private func diagnose(_ label: String, _ text: String) {
+        guard AppPreferences.shared.isTranscriptDiagnosticsActive else { return }
+        logger.notice("诊断·\(label, privacy: .public)：\(text, privacy: .public)")
+    }
 
     /// A long standby request makes on-device recognition slower and buries the wake
     /// phrase in unrelated speech. After a pause (or a lot of text) start a fresh
@@ -694,6 +1031,7 @@ public final class AppState {
                   self.activeRecognitionID == identifier,
                   SpeechRecognizer.shared.currentSessionID == identifier else { return }
             self.standbyRotationTask = nil
+            self.diagnose("待命听到（未唤醒）", self.standbyTranscript)
             self.activeRecognitionID = SpeechRecognizer.shared.startRecognition(wakeWord: AppPreferences.shared.wakeWord)
         }
     }
@@ -748,29 +1086,41 @@ public final class AppState {
         guard allowsFollowUp, prefs.isFollowUpEnabled, permissionsGranted, speechBlockReason == nil,
               errorMessage == nil, !isPreparingAudio else { return false }
         allowsFollowUp = false
-        conversationID = UUID()
+        let conversation = UUID()
+        conversationID = conversation
         state = .listening
         isFollowUpListening = true
         followUpRewoken = false
+        lastSpokenReply = currentResponse
         transcriptHandoff.beginManual(initialQuery: "")
         currentTranscript = ""
         isHUDVisible = true
-        resumeCapture()
-        guard AudioEngineManager.shared.isRunning else {
-            state = .idle
-            conversationID = nil
-            isFollowUpListening = false
-            return false
-        }
         if let sound = NSSound(named: "Tink") {
             sound.volume = 0.35
             sound.play()
         }
         LLMConnectionWarmer.warm(prefs.activeEndpointURL)
-        scheduleVoiceExpiry(voiceEndpoint.begin(now: ProcessInfo.processInfo.systemUptime,
-                                                initialWaitDuration: prefs.followUpSeconds))
+        // The speaker's tail, the room and the chime must not be heard as the user's
+        // next question, so the microphone opens a moment after playback ends.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(Int(Self.followUpMicrophoneDelay * 1000)))
+            guard let self, self.conversationID == conversation, self.state == .listening,
+                  self.isFollowUpListening else { return }
+            self.resumeCapture()
+            guard AudioEngineManager.shared.isRunning else {
+                self.isFollowUpListening = false
+                self.finishInteraction(delay: 1)
+                return
+            }
+            _ = self.beginCloudListening(prerollSeconds: 0, fromVoiceWake: false)
+            self.endpointExtension = 0
+            self.scheduleVoiceExpiry(self.voiceEndpoint.begin(now: ProcessInfo.processInfo.systemUptime,
+                                                              initialWaitDuration: prefs.followUpSeconds))
+        }
         return true
     }
+
+    static let followUpMicrophoneDelay: TimeInterval = 0.5
 
     /// One shortcut for the whole conversation: start, send, or interrupt.
     public func toggleVoiceInteraction() {
@@ -832,6 +1182,10 @@ public final class AppState {
     }
 
     private func cancelInteraction() {
+        endBargeProbe(rejected: false)
+        echoReference = nil
+        endCloudSession()
+        isBargeInListening = false
         // Invalidate IDs before cancelling work that can enqueue completion callbacks.
         conversationID = nil
         activeSpeechID = nil
@@ -863,6 +1217,8 @@ public final class AppState {
         state = .idle
         isVoicePreviewing = false
         isFollowUpListening = false
+        isBargeInListening = false
+        endBargeProbe(rejected: false)
         if deliverReminderIfPossible() { return }
         if startFollowUpListening() { return }
         allowsFollowUp = false
@@ -901,6 +1257,15 @@ public final class AppState {
         pauseCapture()
     }
 
+    private func noteVoiceActivity(_ level: Float) {
+        // The noise estimate follows quiet periods quickly and loud ones slowly.
+        noiseLevel += (level < noiseLevel * 2 ? 0.05 : 0.002) * (level - noiseLevel)
+        if level > max(0.05, noiseLevel * 3) {
+            lastVoiceActivityAt = ProcessInfo.processInfo.systemUptime
+        }
+        detectNaturalBargeIn(level)
+    }
+
     private func scheduleVoiceExpiry(_ expiry: VoiceEndpointPolicy.Expiry) {
         silenceTimer?.invalidate()
         let identifier = conversationID
@@ -909,7 +1274,16 @@ public final class AppState {
             Task { @MainActor [weak self] in
                 guard let self, self.state == .listening, self.conversationID == identifier,
                       self.voiceEndpoint.expiry?.generation == expiry.generation else { return }
-                if self.voiceEndpoint.isExpired(generation: expiry.generation, now: ProcessInfo.processInfo.systemUptime) {
+                let now = ProcessInfo.processInfo.systemUptime
+                if self.voiceEndpoint.isExpired(generation: expiry.generation, now: now) {
+                    // Still hearing the speaker: wait a little longer (bounded) for the text to catch up.
+                    if !self.currentTranscript.isEmpty, now - self.lastVoiceActivityAt < 0.4,
+                       self.endpointExtension < 2.5,
+                       let extended = self.voiceEndpoint.extend(now: now, by: 0.4) {
+                        self.endpointExtension += 0.4
+                        self.scheduleVoiceExpiry(extended)
+                        return
+                    }
                     self.stopListeningAndProcess()
                 } else {
                     self.scheduleVoiceExpiry(expiry)
@@ -930,5 +1304,15 @@ public final class AppState {
                 self.isHUDVisible = false
             }
         }
+    }
+}
+
+/// Lets a cloud session's event closure know which session it belongs to.
+private final class CloudSessionBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: UUID?
+    var id: UUID? {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
     }
 }

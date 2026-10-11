@@ -28,7 +28,8 @@ open /Applications/XiaoPen.app
 
 - **本地 Ollama**：启动 Ollama，填写服务地址（默认 `http://127.0.0.1:11434`）和已安装的对话模型（默认 `qwen2.5:latest`）。
 - **Anthropic**：填写 API Key 和可用模型，默认 `claude-sonnet-4-6`。旧版本的默认 `claude-3-5-sonnet-latest` 会自动迁移，其他自定义模型保持不变。
-- **国内平台预设**：“当前大脑”可直接选择千问 AI 平台、DeepSeek、Kimi、MiniMax，自动填入接口地址和推荐的快速模型（可在“常用”菜单切换或手动填写）。每个平台的地址、模型和密钥分别保存，切换平台不会丢失配置。
+- **入口目录**：所有入口定义在 `Sources/XiaoPen/Brain/ProviderCatalog.swift`，分“服务商 / 通用接口 / 本机”三组。每个入口声明它支持的协议（OpenAI 兼容、Anthropic 兼容或 Ollama）及默认地址、推荐模型、控制台链接。新增服务商通常只需加一条记录；如果它有特殊请求参数（关闭思考、联网搜索等），再在 `LLMVendor` 里按域名加一个分支。
+- **配置存储**：当前入口为 `activeProviderID`；每个入口的协议、地址、模型分别存在 `vendor.<id>.protocol / baseURL / model`（非默认协议的地址为 `vendor.<id>.<protocol>.baseURL`）。密钥按入口存于钥匙串 `<id>_api_key`，1.0 之前保存的密钥沿用 `openai_api_key` 与 `anthropic_api_key`。1.0.x 的旧配置在启动时自动迁移，旧键保留不删。
 
   | 平台 | 默认 Base URL | 推荐模型 | 关闭深度思考的方式 |
   | --- | --- | --- | --- |

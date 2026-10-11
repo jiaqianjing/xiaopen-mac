@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import CoreAudio
+import OSLog
 
 public enum AudioEngineError: LocalizedError {
     case noInputDeviceAvailable
@@ -43,7 +44,26 @@ public final class AudioEngineManager {
     public var onCaptureAvailabilityChanged: (@Sendable (Bool) -> Void)?
     public var onCaptureError: (@Sendable (String) -> Void)?
 
-    private init() {}
+    /// Replies play through this node on the capture engine, so voice processing
+    /// knows exactly what to subtract from the microphone (acoustic echo cancellation).
+    public let speechPlayer = AVAudioPlayerNode()
+    nonisolated(unsafe) public static let speechFormat = AVAudioFormat(standardFormatWithSampleRate: 24_000, channels: 1)!
+    /// Voice processing (echo cancellation, noise suppression, automatic gain) is wanted.
+    public var prefersEchoCancellation = true
+    /// Whether the running engine actually has voice processing on.
+    public private(set) var isEchoCancelling = false
+
+    private init() {
+        audioEngine.attach(speechPlayer)
+        audioEngine.connect(speechPlayer, to: audioEngine.mainMixerNode, format: Self.speechFormat)
+    }
+
+    /// Starts the engine for playback of a reply. It is the capture engine, so the
+    /// microphone also runs; callers decide whether its audio is used.
+    public func startForPlayback() throws {
+        guard !audioEngine.isRunning else { return }
+        try start()
+    }
 
     private func installObservers() {
         guard observers.isEmpty else { return }
@@ -121,10 +141,25 @@ public final class AudioEngineManager {
                 throw AudioEngineError.noInputDeviceAvailable
             }
 
-            // Capturing pauses during model replies and playback. Avoid a VoiceProcessingIO
-            // aggregate device, which can retain a disconnected Bluetooth input on macOS.
-            if inputNode.isVoiceProcessingEnabled {
-                try inputNode.setVoiceProcessingEnabled(false)
+            // Voice processing removes the assistant's own voice from the microphone, which
+            // makes barge-in possible and stops replies from being heard as questions.
+            // Bluetooth inputs keep it off: the VoiceProcessingIO aggregate device can
+            // retain a disconnected Bluetooth input on macOS.
+            let wantsVoiceProcessing = prefersEchoCancellation && !Self.defaultInputIsBluetooth()
+            if inputNode.isVoiceProcessingEnabled != wantsVoiceProcessing {
+                do {
+                    try inputNode.setVoiceProcessingEnabled(wantsVoiceProcessing)
+                } catch {
+                    try? inputNode.setVoiceProcessingEnabled(false)
+                }
+            }
+            isEchoCancelling = inputNode.isVoiceProcessingEnabled
+            Logger(subsystem: "com.jiaqianjing.XiaoPen", category: "audio")
+                .notice("音频引擎启动：echoCancellation=\(self.isEchoCancelling), wanted=\(wantsVoiceProcessing)")
+            if isEchoCancelling {
+                // Do not turn other apps (music, videos) way down while listening.
+                inputNode.voiceProcessingOtherAudioDuckingConfiguration =
+                    AVAudioVoiceProcessingOtherAudioDuckingConfiguration(enableAdvancedDucking: false, duckingLevel: .min)
             }
             // Taps consume node output; voice processing may change the hardware input format.
             let recordingFormat = inputNode.outputFormat(forBus: 0)
@@ -139,7 +174,12 @@ public final class AudioEngineManager {
             // Snapshot callbacks on the main actor, so the render callback never reads mutable actor state.
             let levelHandler = onAudioLevel
             let bufferHandler = onAudioBuffer
-            inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { @Sendable buffer, _ in
+            // With voice processing on, macOS reports extra channels; the processed
+            // (echo-cancelled) signal is channel 0, so everything downstream gets mono.
+            let monoFormat = recordingFormat.channelCount > 1
+                ? AVAudioFormat(standardFormatWithSampleRate: recordingFormat.sampleRate, channels: 1) : nil
+            inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { @Sendable source, _ in
+                let buffer = monoFormat.flatMap { Self.firstChannel(of: source, as: $0) } ?? source
                 if let channelData = buffer.floatChannelData?[0], buffer.frameLength > 0 {
                     let frameLength = Int(buffer.frameLength)
                     var sum: Float = 0
@@ -155,7 +195,7 @@ public final class AudioEngineManager {
             audioEngine.prepare()
             try audioEngine.start()
             recoveryBackoff.reset()
-            setStatus("麦克风正在采集 · 回复时自动暂停。")
+            setStatus(isEchoCancelling ? "麦克风正在采集 · 已开启回声消除" : "麦克风正在采集 · 回复时自动暂停。")
             onCaptureAvailabilityChanged?(true)
         } catch {
             stopCapture(notifyUnavailable: true)
@@ -195,6 +235,31 @@ public final class AudioEngineManager {
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
+    }
+
+    nonisolated static func firstChannel(of buffer: AVAudioPCMBuffer, as format: AVAudioFormat) -> AVAudioPCMBuffer? {
+        guard let source = buffer.floatChannelData?[0],
+              let mono = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: buffer.frameLength),
+              let target = mono.floatChannelData?[0] else { return nil }
+        mono.frameLength = buffer.frameLength
+        let stride = buffer.format.isInterleaved ? Int(buffer.format.channelCount) : 1
+        for frame in 0..<Int(buffer.frameLength) { target[frame] = source[frame * stride] }
+        return mono
+    }
+
+    static func defaultInputIsBluetooth() -> Bool {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultInputDevice,
+                                                 mScope: kAudioObjectPropertyScopeGlobal,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        var deviceID = AudioDeviceID(kAudioObjectUnknown)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceID) == noErr,
+              deviceID != kAudioObjectUnknown else { return false }
+        var transport: UInt32 = 0
+        size = UInt32(MemoryLayout<UInt32>.size)
+        address.mSelector = kAudioDevicePropertyTransportType
+        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &transport) == noErr else { return false }
+        return transport == kAudioDeviceTransportTypeBluetooth || transport == kAudioDeviceTransportTypeBluetoothLE
     }
 
     private func hasDefaultInputDevice() -> Bool {

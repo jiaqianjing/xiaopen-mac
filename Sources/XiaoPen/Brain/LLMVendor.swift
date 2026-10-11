@@ -1,59 +1,19 @@
 import Foundation
 
-/// OpenAI-compatible platforms with known defaults and request extensions.
-/// The base URL stays editable; request options follow the URL's host so a
-/// "custom" entry pointing at a known platform still gets the right extensions.
+/// Request quirks of known OpenAI-compatible platforms, detected from the base
+/// URL's host so a generic entry pointing at a known platform still works.
+/// Names, default addresses and models live in `ProviderCatalog`.
 public enum LLMVendor: String, CaseIterable, Identifiable, Codable, Sendable {
     case qianwen
     case deepseek
     case kimi
     case minimax
+    case zhipu
+    case volcengine
+    case openrouter
     case custom
 
     public var id: String { rawValue }
-
-    public var displayName: String {
-        switch self {
-        case .qianwen: return "千问 AI 平台"
-        case .deepseek: return "DeepSeek"
-        case .kimi: return "Kimi（月之暗面）"
-        case .minimax: return "MiniMax"
-        case .custom: return "自定义 OpenAI 兼容"
-        }
-    }
-
-    public var defaultBaseURL: String {
-        switch self {
-        case .qianwen: return "https://maas.qianwenaiapi.com/compatible-mode/v1"
-        case .deepseek: return "https://api.deepseek.com/v1"
-        case .kimi: return "https://api.moonshot.cn/v1"
-        case .minimax: return "https://api.minimaxi.com/v1"
-        case .custom: return "https://api.openai.com/v1"
-        }
-    }
-
-    /// Fast, voice-friendly models first. Model catalogs change, so the field stays free text.
-    public var suggestedModels: [String] {
-        switch self {
-        case .qianwen: return ["deepseek-v4.1-flash", "qwen3.8-flash", "qwen-flash", "qwen3.7-plus", "kimi-k2.6"]
-        case .deepseek: return ["deepseek-v4-flash", "deepseek-v4-pro"]
-        case .kimi: return ["kimi-k2.6", "kimi-k3"]
-        case .minimax: return ["MiniMax-M2.7-highspeed", "MiniMax-M3", "MiniMax-M2.7"]
-        case .custom: return ["gpt-4o-mini"]
-        }
-    }
-
-    public var defaultModel: String { suggestedModels[0] }
-
-    public var consoleURL: URL? {
-        switch self {
-        case .qianwen: return URL(string: "https://platform.qianwenai.com/home")
-        case .deepseek: return URL(string: "https://platform.deepseek.com/api_keys")
-        case .kimi: return URL(string: "https://platform.moonshot.cn/console/api-keys")
-        case .minimax: return URL(string: "https://platform.minimaxi.com")
-        case .custom: return nil
-        }
-    }
 
     public static func infer(fromBaseURL value: String) -> LLMVendor {
         guard let host = URL(string: value.trimmingCharacters(in: .whitespacesAndNewlines))?.host?.lowercased() else {
@@ -63,6 +23,9 @@ public enum LLMVendor: String, CaseIterable, Identifiable, Codable, Sendable {
         if host.hasSuffix("deepseek.com") { return .deepseek }
         if host.contains("moonshot") || host.contains("kimi.com") { return .kimi }
         if host.contains("minimax") { return .minimax }
+        if host.hasSuffix("bigmodel.cn") || host.hasSuffix("z.ai") { return .zhipu }
+        if host.hasSuffix("volces.com") || host.hasSuffix("volcengineapi.com") { return .volcengine }
+        if host.hasSuffix("openrouter.ai") { return .openrouter }
         return .custom
     }
 
@@ -82,7 +45,14 @@ public enum LLMVendor: String, CaseIterable, Identifiable, Codable, Sendable {
             return model.hasPrefix("kimi-k2.5") || model.hasPrefix("kimi-k2.6") ? .thinkingType(enabled: "enabled") : nil
         case .minimax:
             return model == "minimax-m3" ? .thinkingType(enabled: "adaptive") : nil
-        case .custom:
+        case .zhipu:
+            // GLM-5.3 always reasons and rejects "disabled".
+            let hybrid = ["glm-4.5", "glm-4.6", "glm-4.7", "glm-5.2"]
+            return hybrid.contains(where: model.hasPrefix) ? .thinkingType(enabled: "enabled") : nil
+        case .volcengine:
+            return model.hasPrefix("doubao-seed") ? .thinkingType(enabled: "enabled") : nil
+        case .openrouter, .custom:
+            // OpenRouter's reasoning switch differs per upstream model and can 400.
             return nil
         }
     }

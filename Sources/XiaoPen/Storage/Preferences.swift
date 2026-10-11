@@ -5,16 +5,38 @@ public enum LLMProviderType: String, CaseIterable, Identifiable, Codable, Sendab
     case ollama = "ollama"
     case anthropic = "anthropic"
     case openAI = "openai"
+    /// OpenAI Responses API billed to a ChatGPT plan via Sign in with ChatGPT.
+    case chatGPT = "chatgpt"
     
     public var id: String { rawValue }
     
     public var displayName: String {
         switch self {
-        case .ollama: return "本地 Ollama"
-        case .anthropic: return "Anthropic (Claude)"
-        case .openAI: return "OpenAI 兼容接口"
+        case .ollama: return "Ollama"
+        case .anthropic: return "Anthropic 协议"
+        case .openAI: return "OpenAI 协议"
+        case .chatGPT: return "ChatGPT 订阅"
         }
     }
+}
+
+/// How a reply can be interrupted by voice.
+public enum BargeInMode: String, CaseIterable, Identifiable, Codable, Sendable {
+    /// Just start talking (needs echo cancellation and cloud recognition).
+    case natural
+    /// Say the wake word.
+    case wakeWord
+    case off
+
+    public var id: String { rawValue }
+}
+
+/// Who transcribes the question after a local wake-up.
+public enum SpeechRecognitionMode: String, CaseIterable, Identifiable, Codable, Sendable {
+    case cloud
+    case local
+
+    public var id: String { rawValue }
 }
 
 public enum TTSEngineType: String, CaseIterable, Identifiable, Codable, Sendable {
@@ -60,48 +82,33 @@ public final class AppPreferences: @unchecked Sendable {
     @ObservationIgnored private var cachedAPIKeys: [String: String] = [:]
     
     // MARK: - LLM Settings
-    public var providerType: LLMProviderType {
-        didSet { defaults.set(providerType.rawValue, forKey: "providerType") }
+    /// The selected entry in `ProviderCatalog` (a vendor, a generic endpoint, or Ollama).
+    public private(set) var activeProviderID: String {
+        didSet { defaults.set(activeProviderID, forKey: "activeProviderID") }
     }
-    
+    /// The wire protocol of the active entry; change it with `selectProtocol`.
+    public private(set) var providerType: LLMProviderType {
+        didSet {
+            defaults.set(providerType.rawValue, forKey: "providerType")
+            defaults.set(providerType.rawValue, forKey: "vendor.\(activeProviderID).protocol")
+        }
+    }
+    /// Base URL of the active entry for its current protocol.
+    public var baseURL: String {
+        didSet { defaults.set(baseURL, forKey: baseURLKey(activeProviderID, providerType)) }
+    }
+    public var model: String {
+        didSet { defaults.set(model, forKey: "vendor.\(activeProviderID).model") }
+    }
+    /// The entry whose key was saved before per-provider keys existed; it keeps the old account.
+    @ObservationIgnored private let legacyKeyProviderID: String
+
     public var systemPrompt: String {
         didSet { defaults.set(systemPrompt, forKey: "systemPrompt") }
     }
-    
-    // Ollama
-    public var ollamaBaseURL: String {
-        didSet { defaults.set(ollamaBaseURL, forKey: "ollamaBaseURL") }
-    }
-    public var ollamaModel: String {
-        didSet { defaults.set(ollamaModel, forKey: "ollamaModel") }
-    }
-    
-    // Anthropic
-    public var anthropicModel: String {
-        didSet { defaults.set(anthropicModel, forKey: "anthropicModel") }
-    }
-    
-    // OpenAI Compatible
-    public private(set) var openAIVendor: LLMVendor {
-        didSet { defaults.set(openAIVendor.rawValue, forKey: "openAIVendor") }
-    }
-    /// The vendor whose key was saved before per-platform keys existed; it keeps the old account.
-    @ObservationIgnored private let legacyKeyVendor: LLMVendor
-    public var openAIBaseURL: String {
-        didSet {
-            defaults.set(openAIBaseURL, forKey: "openAIBaseURL")
-            defaults.set(openAIBaseURL, forKey: "vendor.\(openAIVendor.rawValue).baseURL")
-        }
-    }
-    public var openAIModel: String {
-        didSet {
-            defaults.set(openAIModel, forKey: "openAIModel")
-            defaults.set(openAIModel, forKey: "vendor.\(openAIVendor.rawValue).model")
-        }
-    }
 
-    public var openAIThinkingEnabled: Bool {
-        didSet { defaults.set(openAIThinkingEnabled, forKey: "openAIThinkingEnabled") }
+    public var thinkingEnabled: Bool {
+        didSet { defaults.set(thinkingEnabled, forKey: "openAIThinkingEnabled") }
     }
 
     /// Off by default: each search is billed by the platform to the user's account.
@@ -109,41 +116,65 @@ public final class AppPreferences: @unchecked Sendable {
         didSet { defaults.set(isWebSearchEnabled, forKey: "isWebSearchEnabled") }
     }
 
-    public var supportsWebSearch: Bool {
-        providerType == .openAI && LLMVendor.infer(fromBaseURL: openAIBaseURL).supportsWebSearch
+    public var activeProvider: ProviderPreset {
+        ProviderCatalog.preset(id: activeProviderID) ?? ProviderCatalog.preset(id: "custom")!
     }
 
-    public var usesWebSearch: Bool { supportsWebSearch && isWebSearchEnabled }
-
-    /// Switches platform while remembering each platform's own address and model.
-    public func selectVendor(_ vendor: LLMVendor) {
-        guard vendor != openAIVendor else { return }
-        openAIVendor = vendor
-        openAIBaseURL = defaults.string(forKey: "vendor.\(vendor.rawValue).baseURL") ?? vendor.defaultBaseURL
-        openAIModel = defaults.string(forKey: "vendor.\(vendor.rawValue).model") ?? vendor.defaultModel
+    /// Switches entry while remembering each entry's own protocol, address and model.
+    public func selectProvider(_ id: String) {
+        guard id != activeProviderID, let preset = ProviderCatalog.preset(id: id) else { return }
+        activeProviderID = id
+        let saved = defaults.string(forKey: "vendor.\(id).protocol").flatMap(LLMProviderType.init(rawValue:))
+        providerType = saved.flatMap { preset.protocols.contains($0) ? $0 : nil } ?? preset.defaultProtocol
+        baseURL = storedBaseURL(id, providerType) ?? preset.defaultBaseURL(for: providerType)
+        model = defaults.string(forKey: "vendor.\(id).model") ?? preset.defaultModel
     }
 
-    /// Extensions follow the actual host, not the picker, so a custom entry for a known platform still works.
-    public var openAIRequestOptions: OpenAIVendorOptions {
-        LLMVendor.infer(fromBaseURL: openAIBaseURL).requestOptions(
-            model: openAIModel, thinkingEnabled: openAIThinkingEnabled, webSearch: isWebSearchEnabled)
+    /// For entries that speak both protocols (e.g. DeepSeek's Anthropic-compatible endpoint).
+    public func selectProtocol(_ protocolType: LLMProviderType) {
+        guard protocolType != providerType, activeProvider.protocols.contains(protocolType) else { return }
+        providerType = protocolType
+        baseURL = storedBaseURL(activeProviderID, protocolType) ?? activeProvider.defaultBaseURL(for: protocolType)
     }
 
-    public var supportsThinkingControl: Bool { openAIRequestOptions.supportsThinkingToggle }
+    /// The default protocol keeps the pre-1.1 key, so existing per-platform addresses carry over.
+    private func baseURLKey(_ id: String, _ protocolType: LLMProviderType) -> String {
+        let preset = ProviderCatalog.preset(id: id)
+        return protocolType == (preset?.defaultProtocol ?? .openAI)
+            ? "vendor.\(id).baseURL" : "vendor.\(id).\(protocolType.rawValue).baseURL"
+    }
 
-    public var openAIThinkingOption: Bool? {
-        let options = openAIRequestOptions
+    private func storedBaseURL(_ id: String, _ protocolType: LLMProviderType) -> String? {
+        defaults.string(forKey: baseURLKey(id, protocolType))
+    }
+
+    /// Extensions follow the actual host, not the picker, so a generic entry for a known platform still works.
+    public var requestOptions: OpenAIVendorOptions {
+        guard providerType == .openAI else { return OpenAIVendorOptions() }
+        return LLMVendor.infer(fromBaseURL: baseURL).requestOptions(
+            model: model, thinkingEnabled: thinkingEnabled, webSearch: isWebSearchEnabled)
+    }
+
+    public var supportsThinkingControl: Bool {
+        providerType == .chatGPT || requestOptions.supportsThinkingToggle
+    }
+
+    public var thinkingOption: Bool? {
+        let options = requestOptions
         if let flag = options.enableThinking { return flag }
         return options.thinkingType.map { $0 != "disabled" }
     }
 
+    public var supportsWebSearch: Bool {
+        providerType == .openAI && LLMVendor.infer(fromBaseURL: baseURL).supportsWebSearch
+    }
+
+    public var usesWebSearch: Bool { supportsWebSearch && isWebSearchEnabled }
+
     /// The chat endpoint for connection warm-up; local Ollama needs none.
     public var activeEndpointURL: URL? {
-        switch providerType {
-        case .ollama: return nil
-        case .anthropic: return URL(string: "https://api.anthropic.com")
-        case .openAI: return URL(string: openAIBaseURL.trimmingCharacters(in: .whitespacesAndNewlines))
-        }
+        guard providerType != .ollama else { return nil }
+        return URL(string: baseURL.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     // MARK: - Assistant Skills
@@ -166,6 +197,33 @@ public final class AppPreferences: @unchecked Sendable {
     public var showsStandbyTranscript: Bool {
         didSet { defaults.set(showsStandbyTranscript, forKey: "showsStandbyTranscript") }
     }
+    /// Voice processing on the microphone; required for barge-in.
+    public var isEchoCancellationEnabled: Bool {
+        didSet { defaults.set(isEchoCancellationEnabled, forKey: "isEchoCancellationEnabled") }
+    }
+    public var bargeInMode: BargeInMode {
+        didSet { defaults.set(bargeInMode.rawValue, forKey: "bargeInMode") }
+    }
+    /// The wake word interrupts in both voice modes.
+    public var isBargeInEnabled: Bool { bargeInMode != .off }
+    /// The wake word is always recognized on this Mac; this chooses who transcribes the question.
+    public var speechRecognitionMode: SpeechRecognitionMode {
+        didSet { defaults.set(speechRecognitionMode.rawValue, forKey: "speechRecognitionMode") }
+    }
+    public var cloudASRModel: String {
+        didSet { defaults.set(cloudASRModel, forKey: "cloudASRModel") }
+    }
+    public static let cloudASRModels = ["fun-asr-realtime", "qwen-audio-3.1-asr-flash-streaming"]
+    /// Cloud recognition runs on Qianwen and uses that platform's key, whichever brain is active.
+    public var cloudASRKeyAccount: String? { apiKeyAccount(forProviderID: "qianwen") }
+
+    /// Until this time, recognized text is written to the log to diagnose wake and
+    /// recognition problems. Off by default and always time-limited.
+    public var transcriptDiagnosticsUntil: Date? {
+        didSet { defaults.set(transcriptDiagnosticsUntil, forKey: "transcriptDiagnosticsUntil") }
+    }
+    public var isTranscriptDiagnosticsActive: Bool { (transcriptDiagnosticsUntil ?? .distantPast) > Date() }
+
     public var hasCompletedOnboarding: Bool {
         didSet { defaults.set(hasCompletedOnboarding, forKey: "hasCompletedOnboarding") }
     }
@@ -199,42 +257,53 @@ public final class AppPreferences: @unchecked Sendable {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         
-        self.providerType = LLMProviderType(rawValue: defaults.string(forKey: "providerType") ?? "") ?? .ollama
+        // Pre-1.1 settings: one global protocol, OpenAI-compatible platform slots, and
+        // separate Anthropic/Ollama fields. Copy them into per-entry slots once.
+        let legacyBaseURL = defaults.string(forKey: "openAIBaseURL") ?? "https://api.openai.com/v1"
+        let legacyVendor = defaults.string(forKey: "openAIVendor") ?? LLMVendor.infer(fromBaseURL: legacyBaseURL).rawValue
+        if defaults.string(forKey: "openAIVendor") == nil, defaults.string(forKey: "openAIBaseURL") != nil {
+            defaults.set(legacyBaseURL, forKey: "vendor.\(legacyVendor).baseURL")
+            if let model = defaults.string(forKey: "openAIModel") { defaults.set(model, forKey: "vendor.\(legacyVendor).model") }
+        }
+        if defaults.string(forKey: "vendor.ollama.baseURL") == nil, let value = defaults.string(forKey: "ollamaBaseURL") {
+            defaults.set(value, forKey: "vendor.ollama.baseURL")
+        }
+        if defaults.string(forKey: "vendor.ollama.model") == nil, let value = defaults.string(forKey: "ollamaModel") {
+            defaults.set(value, forKey: "vendor.ollama.model")
+        }
+        if defaults.string(forKey: "vendor.anthropic.model") == nil, let value = defaults.string(forKey: "anthropicModel"),
+           value != "claude-3-5-sonnet-latest" {
+            defaults.set(value, forKey: "vendor.anthropic.model")
+        }
+        let activeID: String
+        if let saved = defaults.string(forKey: "activeProviderID"), ProviderCatalog.preset(id: saved) != nil {
+            activeID = saved
+        } else {
+            switch defaults.string(forKey: "providerType") {
+            case "ollama": activeID = "ollama"
+            case "anthropic": activeID = "anthropic"
+            case "openai": activeID = ProviderCatalog.preset(id: legacyVendor) != nil ? legacyVendor : "custom"
+            default: activeID = ProviderCatalog.defaultID
+            }
+            defaults.set(activeID, forKey: "activeProviderID")
+        }
+        if let saved = defaults.string(forKey: "legacyKeyVendor") {
+            self.legacyKeyProviderID = saved
+        } else {
+            self.legacyKeyProviderID = legacyVendor
+            defaults.set(legacyVendor, forKey: "legacyKeyVendor")
+        }
+        let preset = ProviderCatalog.preset(id: activeID)!
+        let savedProtocol = defaults.string(forKey: "vendor.\(activeID).protocol").flatMap(LLMProviderType.init(rawValue:))
+        let protocolType = savedProtocol.flatMap { preset.protocols.contains($0) ? $0 : nil } ?? preset.defaultProtocol
+        let urlKey = protocolType == preset.defaultProtocol
+            ? "vendor.\(activeID).baseURL" : "vendor.\(activeID).\(protocolType.rawValue).baseURL"
+        self.activeProviderID = activeID
+        self.providerType = protocolType
+        self.baseURL = defaults.string(forKey: urlKey) ?? preset.defaultBaseURL(for: protocolType)
+        self.model = defaults.string(forKey: "vendor.\(activeID).model") ?? preset.defaultModel
         self.systemPrompt = defaults.string(forKey: "systemPrompt") ?? "你是小喷，住在家里的智能桌面伙伴。说话简短、自然、温暖、幽默，回答通常在一两句话以内，不长篇大论。"
-        
-        self.ollamaBaseURL = defaults.string(forKey: "ollamaBaseURL") ?? "http://127.0.0.1:11434"
-        self.ollamaModel = defaults.string(forKey: "ollamaModel") ?? "qwen2.5:latest"
-        
-        let savedClaudeModel = defaults.string(forKey: "anthropicModel")
-        if savedClaudeModel == nil || savedClaudeModel == "claude-3-5-sonnet-latest" {
-            self.anthropicModel = "claude-sonnet-4-6"
-            defaults.set("claude-sonnet-4-6", forKey: "anthropicModel")
-        } else {
-            self.anthropicModel = savedClaudeModel!
-        }
-        
-        let baseURL = defaults.string(forKey: "openAIBaseURL") ?? LLMVendor.custom.defaultBaseURL
-        let model = defaults.string(forKey: "openAIModel") ?? LLMVendor.custom.defaultModel
-        let vendor: LLMVendor
-        if let saved = defaults.string(forKey: "openAIVendor").flatMap(LLMVendor.init(rawValue:)) {
-            vendor = saved
-        } else {
-            // First launch with platform presets: adopt the platform already configured.
-            vendor = LLMVendor.infer(fromBaseURL: baseURL)
-            defaults.set(vendor.rawValue, forKey: "openAIVendor")
-            defaults.set(baseURL, forKey: "vendor.\(vendor.rawValue).baseURL")
-            defaults.set(model, forKey: "vendor.\(vendor.rawValue).model")
-        }
-        self.openAIVendor = vendor
-        if let saved = defaults.string(forKey: "legacyKeyVendor").flatMap(LLMVendor.init(rawValue:)) {
-            self.legacyKeyVendor = saved
-        } else {
-            self.legacyKeyVendor = vendor
-            defaults.set(vendor.rawValue, forKey: "legacyKeyVendor")
-        }
-        self.openAIBaseURL = baseURL
-        self.openAIModel = model
-        self.openAIThinkingEnabled = defaults.object(forKey: "openAIThinkingEnabled") as? Bool ?? false
+        self.thinkingEnabled = defaults.object(forKey: "openAIThinkingEnabled") as? Bool ?? false
         self.isWebSearchEnabled = defaults.object(forKey: "isWebSearchEnabled") as? Bool ?? false
         self.weatherCity = defaults.string(forKey: "weatherCity") ?? ""
         self.usesAutomaticLocation = defaults.object(forKey: "usesAutomaticLocation") as? Bool ?? true
@@ -242,6 +311,12 @@ public final class AppPreferences: @unchecked Sendable {
         self.followUpSeconds = defaults.double(forKey: "followUpSeconds") == 0 ? 6 : defaults.double(forKey: "followUpSeconds")
         self.showsStandbyTranscript = defaults.object(forKey: "showsStandbyTranscript") as? Bool ?? false
         self.isGlobalHotKeyEnabled = defaults.object(forKey: "isGlobalHotKeyEnabled") as? Bool ?? true
+        self.transcriptDiagnosticsUntil = defaults.object(forKey: "transcriptDiagnosticsUntil") as? Date
+        self.isEchoCancellationEnabled = defaults.object(forKey: "isEchoCancellationEnabled") as? Bool ?? true
+        self.bargeInMode = BargeInMode(rawValue: defaults.string(forKey: "bargeInMode") ?? "")
+            ?? ((defaults.object(forKey: "isBargeInEnabled") as? Bool) == false ? .off : .natural)
+        self.speechRecognitionMode = SpeechRecognitionMode(rawValue: defaults.string(forKey: "speechRecognitionMode") ?? "") ?? .cloud
+        self.cloudASRModel = defaults.string(forKey: "cloudASRModel") ?? Self.cloudASRModels[0]
         // People who already configured a model skip the first-run guide.
         self.hasCompletedOnboarding = defaults.object(forKey: "hasCompletedOnboarding") as? Bool
             ?? (defaults.string(forKey: "providerType") != nil)
@@ -256,40 +331,23 @@ public final class AppPreferences: @unchecked Sendable {
     }
     
     // MARK: - Keychain Accessors
-    /// Keychain account for a provider; OpenAI-compatible platforms each have their own.
-    public func apiKeyAccount(for provider: LLMProviderType, vendor: LLMVendor? = nil) -> String? {
-        switch provider {
-        case .ollama: return nil
-        case .anthropic: return "anthropic_api_key"
-        case .openAI:
-            let vendor = vendor ?? openAIVendor
-            return vendor == legacyKeyVendor ? "openai_api_key" : "\(vendor.rawValue)_api_key"
-        }
+    /// Keychain account for an entry; every provider keeps its own key.
+    public func apiKeyAccount(forProviderID id: String) -> String? {
+        guard let preset = ProviderCatalog.preset(id: id), preset.group != .local,
+              !preset.protocols.contains(.chatGPT) else { return nil }
+        if id == "anthropic" { return "anthropic_api_key" }
+        return id == legacyKeyProviderID ? "openai_api_key" : "\(id)_api_key"
     }
 
-    public var anthropicAPIKey: String { cachedOrStoredKey(account: "anthropic_api_key") }
+    public var currentKeyAccount: String? { apiKeyAccount(forProviderID: activeProviderID) }
 
-    public var openAIAPIKey: String {
-        apiKeyAccount(for: .openAI).map(cachedOrStoredKey(account:)) ?? ""
-    }
-
-    private func cachedOrStoredKey(account: String) -> String {
+    func cachedOrStoredKey(account: String) -> String {
         if let cached = apiKeyCacheLock.withLock({ cachedAPIKeys[account] }) { return cached }
         return KeychainHelper.load(key: account) ?? ""
     }
 
-    public func cacheAPIKey(_ value: String, for provider: LLMProviderType) {
-        guard let account = apiKeyAccount(for: provider) else { return }
-        cacheAPIKey(value, account: account)
-    }
-
     public func cacheAPIKey(_ value: String, account: String) {
         apiKeyCacheLock.withLock { cachedAPIKeys[account] = value }
-    }
-
-    public func readAPIKey(for provider: LLMProviderType) async throws -> String {
-        guard let account = apiKeyAccount(for: provider) else { return "" }
-        return try await readAPIKey(account: account)
     }
 
     public func readAPIKey(account: String) async throws -> String {

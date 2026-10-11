@@ -252,7 +252,7 @@ public struct FloatingHUDView: View {
     }
 
     private var providerName: String {
-        prefs.providerType == .openAI ? prefs.openAIVendor.displayName : prefs.providerType.displayName
+        prefs.activeProvider.name
     }
 
     // MARK: - Issues

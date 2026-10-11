@@ -53,7 +53,7 @@ enum LLMConnectionWarmer {
 }
 
 enum LLMStreamFormat: Sendable, Equatable {
-    case openAI, anthropic, ollama
+    case openAI, anthropic, ollama, openAIResponses
 }
 
 enum LLMHTTPClient {
@@ -238,6 +238,9 @@ enum LLMHTTPClient {
 
     static func serviceError(in json: [String: Any]) -> String? {
         if let error = json["error"] as? [String: Any] {
+            if let code = error["code"] as? String, code.hasPrefix("subscription_sharing") {
+                return LLMStreamDecoder.planErrorMessage(code: code, message: error["message"] as? String)
+            }
             return concise(error["message"] as? String ?? error["type"] as? String ?? "模型服务返回错误。")
         }
         if let error = json["error"] as? String { return concise(error) }
@@ -374,10 +377,12 @@ private struct LLMStreamDecoder {
     }
 
     private func decode(_ payload: String) throws -> LLMStreamChunk {
-        if format == .openAI && payload.trimmingCharacters(in: .whitespacesAndNewlines) == "[DONE]" {
+        if (format == .openAI || format == .openAIResponses)
+            && payload.trimmingCharacters(in: .whitespacesAndNewlines) == "[DONE]" {
             return LLMStreamChunk(completed: true)
         }
         let json = try LLMHTTPClient.object(from: Data(payload.utf8))
+        if format == .openAIResponses { return try decodeResponsesEvent(json) }
         if let message = LLMHTTPClient.serviceError(in: json) { throw LLMProviderError.streamError(message) }
         switch format {
         case .openAI:
@@ -400,6 +405,40 @@ private struct LLMStreamDecoder {
             return LLMStreamChunk(text: (json["delta"] as? [String: Any])?["text"] as? String)
         case .ollama:
             return LLMStreamChunk(text: (json["message"] as? [String: Any])?["content"] as? String, completed: json["done"] as? Bool == true)
+        case .openAIResponses:
+            return LLMStreamChunk()
+        }
+    }
+
+    /// Responses API streaming events. Only `response.completed` counts as success.
+    private func decodeResponsesEvent(_ json: [String: Any]) throws -> LLMStreamChunk {
+        switch json["type"] as? String {
+        case "response.output_text.delta":
+            return LLMStreamChunk(text: json["delta"] as? String)
+        case "response.completed":
+            return LLMStreamChunk(completed: true)
+        case "response.incomplete":
+            let reason = ((json["response"] as? [String: Any])?["incomplete_details"] as? [String: Any])?["reason"] as? String
+            throw LLMProviderError.invalidResponse("回答没有完成（\(reason ?? "未知原因")），请重试。")
+        case "response.failed", "error":
+            let error = (json["response"] as? [String: Any])?["error"] as? [String: Any] ?? json["error"] as? [String: Any] ?? json
+            throw LLMProviderError.streamError(Self.planErrorMessage(code: error["code"] as? String,
+                                                                     message: error["message"] as? String))
+        default:
+            return LLMStreamChunk()
+        }
+    }
+
+    static func planErrorMessage(code: String?, message: String?) -> String {
+        switch code {
+        case "subscription_sharing_usage_limit_exceeded":
+            return "ChatGPT 订阅额度已用完，请在 ChatGPT 设置 → 用量中查看，或暂时切换到其他大脑。"
+        case "subscription_sharing_usage_unavailable":
+            return "暂时无法确认 ChatGPT 订阅额度，请稍后再试。"
+        case "subscription_sharing_user_not_eligible":
+            return "这个 ChatGPT 账号暂时不能在第三方应用中使用订阅额度。"
+        default:
+            return message.map { "ChatGPT 返回错误：\($0)" } ?? "ChatGPT 返回错误\(code.map { "：\($0)" } ?? "")。"
         }
     }
 }

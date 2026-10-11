@@ -88,7 +88,7 @@ struct OnboardingView: View {
             }
             .font(.title3).foregroundStyle(.secondary)
             HStack(spacing: 28) {
-                feature("waveform", "语音识别在本机完成")
+                feature("waveform", "唤醒词在本机识别")
                 feature("bolt.fill", "提醒和音量即时执行")
                 feature("lock.fill", "密钥存在钥匙串")
             }
@@ -100,7 +100,7 @@ struct OnboardingView: View {
 
     private var permissions: some View {
         VStack(alignment: .leading, spacing: 16) {
-            stepTitle("先打个招呼", "小喷需要听见你。语音识别全部在这台 Mac 上进行，不会上传录音。")
+            stepTitle("先打个招呼", "小喷需要听见你。唤醒词在这台 Mac 上识别，没叫“小喷”之前的声音不会上传。")
             VStack(spacing: 10) {
                 permissionRow("mic.fill", "麦克风", "听见你说话", microphoneState)
                 permissionRow("text.bubble.fill", "语音识别", "把语音转成文字（本机）", speechState)

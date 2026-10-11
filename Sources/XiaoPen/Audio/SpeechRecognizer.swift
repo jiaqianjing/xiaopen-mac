@@ -46,6 +46,16 @@ private final class SpeechAudioRequestBridge: @unchecked Sendable {
                 squareSum += sample * sample
             }
             let meanSquare = squareSum / Float(buffer.frameLength)
+            if meanSquare.isFinite {
+                input.peakMeanSquare = max(input.peakMeanSquare, Double(meanSquare))
+                if meanSquare >= 0.0001 {
+                    input.voicedMeanSquareSum += Double(meanSquare)
+                    input.voicedBufferCount += 1
+                } else {
+                    input.quietMeanSquareSum += Double(meanSquare)
+                    input.quietBufferCount += 1
+                }
+            }
             if meanSquare.isFinite, meanSquare >= 0.0001 {
                 input.voicedDuration += duration
                 voicedHistory.append((now, duration))
@@ -118,6 +128,12 @@ public final class SpeechRecognizer {
         }
     }
 
+    static let commandVocabulary = [
+        "天气", "明天", "后天", "下雨", "气温", "温度", "冷不冷", "带伞",
+        "提醒我", "分钟后", "小时后", "叫我起床", "闹钟", "计时器", "倒计时", "取消提醒", "有哪些提醒",
+        "音量", "静音", "取消静音", "调大一点", "调小一点", "百分之"
+    ]
+
     @discardableResult
     public func startRecognition(wakeWord: String = "") -> UUID? {
         stopRecognition()
@@ -171,9 +187,8 @@ public final class SpeechRecognizer {
         request.shouldReportPartialResults = true
         request.addsPunctuation = true
         request.requiresOnDeviceRecognition = true
-        if !wakeWord.isEmpty {
-            request.contextualStrings = [wakeWord]
-        }
+        // Bias recognition toward the wake word and the words local commands rely on.
+        request.contextualStrings = (wakeWord.isEmpty ? [] : [wakeWord]) + Self.commandVocabulary
         setStatus("正在启动本机中文语音识别。")
 
         audioRequest.replace(with: request)
@@ -292,6 +307,11 @@ public final class SpeechRecognizer {
     }
 
     private func finishCurrentSession(invalidateSession: Bool = true) {
+        let input = audioRequest.snapshot()
+        if input.audioDuration >= 1, let sessionID = session.currentID {
+            // Scalar levels only: tells a quiet or noisy microphone apart from a recognition problem.
+            logger.notice("识别会话音频：session=\(sessionID.uuidString, privacy: .public), audioSeconds=\(input.audioDuration), voicedSeconds=\(input.voicedDuration), peakDB=\(input.peakLevelDB), voicedAvgDB=\(input.voicedAverageLevelDB), noiseFloorDB=\(input.noiseFloorDB)")
+        }
         acceptsResults = false
         watchdogTask?.cancel()
         watchdogTask = nil
