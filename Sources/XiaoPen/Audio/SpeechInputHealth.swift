@@ -18,6 +18,24 @@ struct SpeechInputSnapshot: Sendable {
     /// over a long quiet standby never add up to a "stall".
     var recentVoicedDuration: TimeInterval = 0
     var lastBufferUptime: TimeInterval?
+    var peakMeanSquare: Double = 0
+    var voicedMeanSquareSum: Double = 0
+    var voicedBufferCount = 0
+    var quietMeanSquareSum: Double = 0
+    var quietBufferCount = 0
+
+    var peakLevelDB: Int { Self.decibels(peakMeanSquare) }
+    var voicedAverageLevelDB: Int {
+        voicedBufferCount == 0 ? -120 : Self.decibels(voicedMeanSquareSum / Double(voicedBufferCount))
+    }
+    var noiseFloorDB: Int {
+        quietBufferCount == 0 ? -120 : Self.decibels(quietMeanSquareSum / Double(quietBufferCount))
+    }
+
+    /// Power in dBFS from a mean square; -120 stands for digital silence.
+    static func decibels(_ meanSquare: Double) -> Int {
+        meanSquare > 0 ? max(-120, Int((10 * log10(meanSquare)).rounded())) : -120
+    }
 
     static let recentWindow: TimeInterval = 12
 }

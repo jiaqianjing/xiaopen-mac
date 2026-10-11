@@ -388,6 +388,7 @@ public final class AppState {
         isHUDVisible = true
         standbyRotationTask?.cancel()
         voiceWakeCount += 1
+        diagnose("唤醒时识别文字", transcript)
         let sessionSeconds = recognitionStartedAt.map { ProcessInfo.processInfo.systemUptime - $0 } ?? -1
         logger.notice("自定义唤醒词匹配成功 · 保留当前识别会话：sessionSeconds=\(sessionSeconds), transcriptLength=\(transcript.count)")
         NSSound(named: "Tink")?.play()
@@ -434,6 +435,7 @@ public final class AppState {
         }
         state = .thinking
         logger.notice("语音输入结束：characters=\(prompt.count)")
+        diagnose("提交的问题", prompt)
         deviceStatus = "回复期间麦克风已暂停"
         processPrompt(prompt, systemInput: transcriptHandoff.rawSystemCommandTranscript, isVoiceInput: true)
     }
@@ -664,6 +666,12 @@ public final class AppState {
 
     // MARK: - Listening helpers
 
+    /// Recognized text is logged only while the user has turned on time-limited diagnostics.
+    private func diagnose(_ label: String, _ text: String) {
+        guard AppPreferences.shared.isTranscriptDiagnosticsActive else { return }
+        logger.notice("诊断·\(label, privacy: .public)：\(text, privacy: .public)")
+    }
+
     /// A long standby request makes on-device recognition slower and buries the wake
     /// phrase in unrelated speech. After a pause (or a lot of text) start a fresh
     /// request; the microphone keeps running, so no audio is dropped between words.
@@ -676,6 +684,7 @@ public final class AppState {
                   self.activeRecognitionID == identifier,
                   SpeechRecognizer.shared.currentSessionID == identifier else { return }
             self.standbyRotationTask = nil
+            self.diagnose("待命听到（未唤醒）", self.standbyTranscript)
             self.activeRecognitionID = SpeechRecognizer.shared.startRecognition(wakeWord: AppPreferences.shared.wakeWord)
         }
     }

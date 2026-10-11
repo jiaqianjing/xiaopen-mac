@@ -13,7 +13,7 @@
 | 提醒 | 保存在 `~/Library/Application Support/XiaoPen/reminders.json`。 |
 | API Key | 保存在 macOS 钥匙串中。 |
 | 自然语音模型 | 保存在 `~/Library/Application Support/XiaoPen/Models/`，在本机 GPU 上运行。 |
-| 日志 | 写入 macOS 系统日志，不包含对话内容、识别文字或密钥。 |
+| 日志 | 写入 macOS 系统日志，不包含对话内容、识别文字或密钥。只有你在“设置 → 关于”中手动开启“记录识别文字”后的 30 分钟内，日志才会记录识别出的文字，用于排查唤醒和识别问题，到时自动停止。 |
 
 ## 发送到第三方的数据
 

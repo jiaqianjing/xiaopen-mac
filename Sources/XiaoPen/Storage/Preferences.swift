@@ -173,6 +173,13 @@ public final class AppPreferences: @unchecked Sendable {
     public var showsStandbyTranscript: Bool {
         didSet { defaults.set(showsStandbyTranscript, forKey: "showsStandbyTranscript") }
     }
+    /// Until this time, recognized text is written to the log to diagnose wake and
+    /// recognition problems. Off by default and always time-limited.
+    public var transcriptDiagnosticsUntil: Date? {
+        didSet { defaults.set(transcriptDiagnosticsUntil, forKey: "transcriptDiagnosticsUntil") }
+    }
+    public var isTranscriptDiagnosticsActive: Bool { (transcriptDiagnosticsUntil ?? .distantPast) > Date() }
+
     public var hasCompletedOnboarding: Bool {
         didSet { defaults.set(hasCompletedOnboarding, forKey: "hasCompletedOnboarding") }
     }
@@ -260,6 +267,7 @@ public final class AppPreferences: @unchecked Sendable {
         self.followUpSeconds = defaults.double(forKey: "followUpSeconds") == 0 ? 6 : defaults.double(forKey: "followUpSeconds")
         self.showsStandbyTranscript = defaults.object(forKey: "showsStandbyTranscript") as? Bool ?? false
         self.isGlobalHotKeyEnabled = defaults.object(forKey: "isGlobalHotKeyEnabled") as? Bool ?? true
+        self.transcriptDiagnosticsUntil = defaults.object(forKey: "transcriptDiagnosticsUntil") as? Date
         // People who already configured a model skip the first-run guide.
         self.hasCompletedOnboarding = defaults.object(forKey: "hasCompletedOnboarding") as? Bool
             ?? (defaults.string(forKey: "providerType") != nil)

@@ -19,9 +19,14 @@ public enum WakeWordDetector {
         let source = normalizedCharacters(in: transcript)
         guard !target.isEmpty, source.count >= target.count else { return nil }
 
+        // Exact (phonetic) matches first; then, for Chinese phrases of four or more
+        // syllables, allow one syllable whose initial was misheard (喷→芬/本).
+        let tolerant = target.count >= 4 && target.allSatisfy { $0.count >= 2 }
+        for pass in tolerant ? [false, true] : [false] {
         for offset in 0...(source.count - target.count) {
             let endOffset = offset + target.count
-            guard source[offset..<endOffset].map(\.key) == target else { continue }
+            let keys = source[offset..<endOffset].map(\.key)
+            guard pass ? Self.differsByOneInitial(keys, target) : keys == target else { continue }
 
             // Case folding can expand one character (for example ß -> ss).
             // Accept matches only at complete original-character boundaries.
@@ -45,7 +50,27 @@ public enum WakeWordDetector {
                 in: .whitespacesAndNewlines.union(.punctuationCharacters)
             )
         }
+        }
         return nil
+    }
+
+    /// True when every syllable matches except one whose final (vowel part) still matches.
+    static func differsByOneInitial(_ keys: [String], _ target: [String]) -> Bool {
+        guard keys.count == target.count else { return false }
+        var mismatches = 0
+        for (key, expected) in zip(keys, target) where key != expected {
+            mismatches += 1
+            guard mismatches <= 1, key.count >= 2, pinyinFinal(key) == pinyinFinal(expected),
+                  !pinyinFinal(key).isEmpty else { return false }
+        }
+        return mismatches == 1
+    }
+
+    private static func pinyinFinal(_ key: String) -> String {
+        let initials: Set<Character> = ["b", "p", "m", "f", "d", "t", "n", "l", "g", "k", "h", "j", "q", "x",
+                                        "z", "c", "s", "r", "y", "w"]
+        guard let first = key.first, initials.contains(first) else { return key }
+        return String(key.dropFirst())
     }
 
     private static func isLatinLetterOrNumber(_ character: Character) -> Bool {

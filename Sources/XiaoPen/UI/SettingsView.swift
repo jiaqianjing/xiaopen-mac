@@ -298,7 +298,18 @@ public struct SettingsView: View {
             Section("帮助与反馈") {
                 Button("重新打开使用引导") { OnboardingWindowController.shared.show() }
                 Button("导出诊断信息…") { DiagnosticsExporter.exportWithSavePanel() }
-                Text("诊断信息包含本次运行的日志和配置概要，不含对话内容和密钥，可以附在问题反馈里。")
+                if prefs.isTranscriptDiagnosticsActive, let until = prefs.transcriptDiagnosticsUntil {
+                    HStack {
+                        Text("正在记录识别文字，\(until.formatted(date: .omitted, time: .shortened)) 自动停止")
+                            .font(.footnote).foregroundStyle(.orange)
+                        Button("立即停止") { prefs.transcriptDiagnosticsUntil = nil }
+                    }
+                } else {
+                    Button("记录识别文字 30 分钟（排查唤醒和识别问题）") {
+                        prefs.transcriptDiagnosticsUntil = Date().addingTimeInterval(30 * 60)
+                    }
+                }
+                Text("诊断信息包含本次运行的日志和配置概要，不含密钥；只有开启“记录识别文字”的 30 分钟内，日志才会包含识别出的文字。")
                     .font(.footnote).foregroundStyle(.secondary)
                 Link("反馈问题", destination: AppInfo.issuesURL)
                 Link("隐私说明", destination: AppInfo.privacyURL)
