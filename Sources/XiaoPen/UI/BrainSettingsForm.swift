@@ -106,7 +106,14 @@ struct BrainSettingsForm<Footer: View>: View {
                             keyStorageNote
                         }
                     }
-                    if prefs.providerType == .openAI, prefs.supportsThinkingControl {
+                    if prefs.supportsWebSearch {
+                Section("联网搜索") {
+                    Toggle("允许联网搜索", isOn: $prefs.isWebSearchEnabled)
+                    Text("问新闻、比赛、行情等最新信息时，由模型自行判断是否搜索。搜索时第一句回答会慢约半秒；平台按次收费（快速搜索约 3 元 / 千次，搜到的内容另按输入 token 计费），从你的账户扣除。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            if prefs.providerType == .openAI, prefs.supportsThinkingControl {
                         Section("回复速度") {
                             Toggle("深度思考", isOn: $prefs.openAIThinkingEnabled)
                             Text("日常语音聊天建议关闭：思考会让第一句回答晚好几秒。复杂问题可临时开启。")

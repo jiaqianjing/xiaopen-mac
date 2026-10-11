@@ -104,6 +104,17 @@ public final class AppPreferences: @unchecked Sendable {
         didSet { defaults.set(openAIThinkingEnabled, forKey: "openAIThinkingEnabled") }
     }
 
+    /// Off by default: each search is billed by the platform to the user's account.
+    public var isWebSearchEnabled: Bool {
+        didSet { defaults.set(isWebSearchEnabled, forKey: "isWebSearchEnabled") }
+    }
+
+    public var supportsWebSearch: Bool {
+        providerType == .openAI && LLMVendor.infer(fromBaseURL: openAIBaseURL).supportsWebSearch
+    }
+
+    public var usesWebSearch: Bool { supportsWebSearch && isWebSearchEnabled }
+
     /// Switches platform while remembering each platform's own address and model.
     public func selectVendor(_ vendor: LLMVendor) {
         guard vendor != openAIVendor else { return }
@@ -114,7 +125,8 @@ public final class AppPreferences: @unchecked Sendable {
 
     /// Extensions follow the actual host, not the picker, so a custom entry for a known platform still works.
     public var openAIRequestOptions: OpenAIVendorOptions {
-        LLMVendor.infer(fromBaseURL: openAIBaseURL).requestOptions(model: openAIModel, thinkingEnabled: openAIThinkingEnabled)
+        LLMVendor.infer(fromBaseURL: openAIBaseURL).requestOptions(
+            model: openAIModel, thinkingEnabled: openAIThinkingEnabled, webSearch: isWebSearchEnabled)
     }
 
     public var supportsThinkingControl: Bool { openAIRequestOptions.supportsThinkingToggle }
@@ -223,6 +235,7 @@ public final class AppPreferences: @unchecked Sendable {
         self.openAIBaseURL = baseURL
         self.openAIModel = model
         self.openAIThinkingEnabled = defaults.object(forKey: "openAIThinkingEnabled") as? Bool ?? false
+        self.isWebSearchEnabled = defaults.object(forKey: "isWebSearchEnabled") as? Bool ?? false
         self.weatherCity = defaults.string(forKey: "weatherCity") ?? ""
         self.usesAutomaticLocation = defaults.object(forKey: "usesAutomaticLocation") as? Bool ?? true
         self.isFollowUpEnabled = defaults.object(forKey: "isFollowUpEnabled") as? Bool ?? true

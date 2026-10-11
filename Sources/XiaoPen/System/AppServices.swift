@@ -46,6 +46,7 @@ enum DiagnosticsExporter {
                      "内存：\(ProcessInfo.processInfo.physicalMemory / 1_073_741_824) GB", ""]
         lines.append("模型：\(prefs.providerType.rawValue) / \(prefs.providerType == .openAI ? prefs.openAIVendor.rawValue : "-") / \(currentModel(prefs))")
         lines.append("朗读：\(prefs.ttsEngine.rawValue)，唤醒词启用：\(prefs.isWakeWordEnabled)，继续倾听：\(prefs.isFollowUpEnabled)")
+        lines.append("联网搜索：\(prefs.usesWebSearch)")
         lines.append("状态：\(AppState.shared.statusText)；\(AppState.shared.deviceStatus)；\(AppState.shared.recognitionStatus)")
         lines.append("")
         lines.append("—— 本次运行日志（不含对话内容与密钥）——")

@@ -507,6 +507,7 @@ public final class AppState {
         if processReminderPrompt(userText) { return }
         let messages = history.messages(adding: userText)
         let systemPrompt = prefs.systemPrompt + AssistantContext.systemPromptSuffix
+            + (selectedProvider == .openAI && requestOptions.enableSearch ? AssistantContext.webSearchSuffix : "")
         let weatherQuery = WeatherIntentDetector.detect(userText)
         let manualCity = prefs.weatherCity.trimmingCharacters(in: .whitespacesAndNewlines)
         let usesLocation = manualCity.isEmpty && prefs.usesAutomaticLocation
