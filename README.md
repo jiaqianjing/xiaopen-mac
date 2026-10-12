@@ -1,107 +1,163 @@
-# 小喷 · 把 Mac mini 变成智能音箱助手
+<p align="center">
+  <strong>English</strong> · <a href="README.zh-CN.md">简体中文</a>
+</p>
 
-<p align="center"><img src="Sources/XiaoPen/Resources/Mascot.png" width="128" alt="小喷"></p>
+<p align="center">
+  <img src="docs/assets/readme-hero.png" width="100%" alt="XiaoPen mascot beside a Mac mini, an external microphone and a speaker. Concept illustration.">
+</p>
 
-给家里已有的 **Mac mini 接上麦克风**，装上小喷并完成配置，就能把它用成一个接入大模型的智能音箱助手。叫一声“小喷小喷”，就能聊天、查天气、定提醒、调 Mac 音量；回答后还能继续追问。
+<h1 align="center">XiaoPen</h1>
 
-这个语音助手的**“大脑”由你选**：已有 ChatGPT 订阅，可以登录后复用现有订阅额度，不需要另外配置聊天 API Key；也可以使用 DeepSeek、Kimi、Claude 等模型服务、兼容 API 或本机 Ollama。
+<p align="center">
+  <strong>Turn your Mac mini into an AI smart speaker.</strong><br>
+  Choose its brain. Reuse your ChatGPT subscription. Just speak.
+</p>
 
-小喷是免费开源的原生 macOS 应用，常驻菜单栏。第三方模型和云端语音识别可能收费，ChatGPT 订阅有额度与网络访问要求，聊天订阅不包含云端识别费用。唤醒词在本机识别，问题默认使用千问云端识别，也可切换为本机识别；具体数据流见[隐私说明](docs/PRIVACY.md)。
+<p align="center">
+  <a href="https://github.com/jiaqianjing/xiaopen-mac/releases"><img src="https://img.shields.io/github/v/release/jiaqianjing/xiaopen-mac?style=flat-square&amp;color=d7b996&amp;labelColor=292622" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/macOS-14%2B-d7b996?style=flat-square&amp;labelColor=292622" alt="macOS 14 or later">
+  <img src="https://img.shields.io/badge/chip-Apple%20Silicon-d7b996?style=flat-square&amp;labelColor=292622" alt="Apple Silicon required">
+  <img src="https://img.shields.io/badge/voice-Mandarin-d7b996?style=flat-square&amp;labelColor=292622" alt="Mandarin voice workflow">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-d7b996?style=flat-square&amp;labelColor=292622" alt="MIT license"></a>
+</p>
 
-[下载小喷](https://github.com/jiaqianjing/xiaopen-mac/releases) · [安装与搭建](#安装) · [反馈问题](https://github.com/jiaqianjing/xiaopen-mac/issues)
+<p align="center">
+  <a href="https://github.com/jiaqianjing/xiaopen-mac/releases"><strong>⬇ Download</strong></a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#choose-your-brain">Models &amp; ChatGPT</a> ·
+  <a href="#privacy">Privacy</a> ·
+  <a href="https://github.com/jiaqianjing/xiaopen-mac/issues">Feedback</a>
+</p>
 
-## 在家里怎么用
+---
 
-- **出门前问天气**：“明天会下雨吗？”
-- **做饭时定提醒**：“十分钟后提醒我关火。”
-- **随口问，再接着聊**：回答后继续问“换个更简单的说法”，不用每句话都重新叫醒。
-- **手不方便操作时调 Mac 音量**：“音量调到 40%。”
+Give the **Mac mini you already own** a voice. XiaoPen is a native macOS app that lives in the menu bar. Connect an external microphone, install XiaoPen and set up a model. Say **“小喷小喷”** to chat, check the weather, set a reminder or change the Mac's volume, then keep the conversation going with a follow-up question.
 
-从家里的日常对话开始，把已有的 Mac mini 用成自己的语音助手。其他符合要求的 Apple 芯片 Mac 也可以使用。
+Already have a **ChatGPT subscription**? Sign in and use your existing allowance for model replies, without a separate model API key. You can also choose a model provider, connect a compatible API or run Ollama locally.
 
-## 能做什么
+**Language:** the current release has a Chinese interface and a Mandarin voice workflow. Other Apple Silicon Macs can use XiaoPen too.
 
-- **复用 ChatGPT 订阅**：用 ChatGPT 账号登录，让语音问答使用已有订阅额度，不需要另外配置聊天 API Key（需要能访问 openai.com，受账号额度限制）。
-- **选择自己的大模型**：内置千问 AI 平台、DeepSeek、Kimi、MiniMax、智谱 GLM、火山方舟（豆包）、OpenRouter、Anthropic Claude，也可以接任何 OpenAI 兼容或 Anthropic 兼容接口，以及本机 Ollama。默认关闭深度思考，回答更快。
-- **联网搜索**：使用千问 AI 平台时可开启，问新闻、比赛、行情等最新信息也能答。
-- **天气**：“明天会下雨吗？”“北京后天冷不冷？” 自动定位所在城市，数据来自 Open-Meteo。
-- **提醒和计时**：“十分钟后提醒我关火”“明天早上八点叫我起床”“我有哪些提醒”。在本机执行，重启后不丢。
-- **系统音量**：“音量调到 40%”“静音”。在本机执行，不经过模型。
-- **语音打断**：使用云端识别并开启回声消除时，小喷说话或思考时，可以直接开口打断、问新问题；也可以设成说唤醒词才打断。本机识别模式支持唤醒词打断。蓝牙耳机下语音打断不可用。
-- **连续对话**：回答完可以直接接着问，不用再叫唤醒词。
-- **全局快捷键 ⌥⌘K**：在任何应用里开始说话、提前发送或打断回答。
-- **自然语音（可选）**：在应用内下载 Qwen3-TTS 模型（约 3.1 GB），在本机 GPU 上生成更自然的朗读声音。
+**Cost:** XiaoPen is a free, MIT-licensed app. Third-party models and cloud speech recognition may charge separately. ChatGPT account limits apply, and its allowance does not include cloud speech-recognition charges.
 
-## 安装
+## A voice companion for your home
 
-要求：macOS 14 或更新，Apple 芯片（M 系列）的 Mac。
+| 🏠 Use the Mac you own | 🧠 Choose its brain |
+| --- | --- |
+| Turn a Mac mini with a microphone into a voice assistant for everyday questions, weather and reminders. | Use your ChatGPT subscription, model APIs, compatible endpoints or local Ollama. |
+| **💬 Keep the conversation going** | **🔒 Know where your data goes** |
+| Ask follow-up questions, use a global shortcut, or enable cloud-backed voice interruption. | Wake-phrase recognition runs on the Mac. Speech recognition and model replies have separate, documented data flows. |
 
-**Mac mini 搭建准备：**
+### Try saying…
 
-- **麦克风**：Mac mini 没有内置麦克风，需要连接能被 macOS 识别的外接麦克风，并在“系统设置 → 声音 → 输入”中选好输入设备。
-- **声音输出**：使用 Mac mini 内置扬声器，或在系统声音设置中选择连接好的扬声器。
-- **运行状态**：使用时保持 Mac 处于唤醒状态，小喷正在运行并开启语音唤醒。拾音距离和效果取决于麦克风、摆放位置与环境。
+Wake XiaoPen with **“小喷小喷”** (xiǎo pēn, xiǎo pēn). You can change the wake phrase in settings.
 
-1. 从 [Releases](https://github.com/jiaqianjing/xiaopen-mac/releases) 下载最新的 `XiaoPen-x.y.z.dmg`，把小喷拖进“应用程序”。
-2. 当前版本尚未经过苹果公证。首次打开时如果提示“无法验证开发者”：在“应用程序”里**右键点击小喷 → 打开 → 打开**；或在“系统设置 → 隐私与安全性”底部点击“仍要打开”。只需要一次。
-3. 跟着首次使用引导完成麦克风、语音识别授权，在“系统设置 → 键盘 → 听写”中开启普通话（中国大陆），供本机识别唤醒词和中文问题。
-4. 按下面的说明选择“大脑”，在“设置 → 通用”选择问题的语音识别方式。默认云端识别使用千问 API Key；未配置密钥或网络出错时，会自动改用本机识别。
-5. 试喊“小喷小喷”，问一个问题，再接着追问，确认麦克风与声音输出正常。
+| At home | Mandarin voice command | Meaning |
+| --- | --- | --- |
+| 🌦 Before heading out | “明天会下雨吗？” | Will it rain tomorrow? |
+| ⏰ While cooking | “十分钟后提醒我关火” | Remind me to turn off the stove in ten minutes. |
+| 💬 During a conversation | “换个更简单的说法” | Explain that more simply. |
+| 🔉 When your hands are busy | “音量调到 40%” | Set the Mac's volume to 40%. |
 
-## 选择它的“大脑”
+Reminder and volume commands run locally, without a model request. Reminders survive app restarts. Weather uses Open-Meteo and can use your city automatically or a city you set yourself.
 
-### 已有 ChatGPT 订阅
+<details>
+<summary><strong>More voice controls and features</strong></summary>
 
-在“设置 → 大脑”选择“ChatGPT 订阅”，按提示在浏览器中登录并授权，再选择模型。回答会使用你的订阅额度，不需要另外配置聊天 API Key；需要能访问 openai.com。
+- **Follow-ups:** keep talking after a reply without repeating the wake phrase.
+- **Voice interruption:** speaking to interrupt requires cloud speech recognition and active echo cancellation. Wake-phrase interruption works with on-device or cloud recognition. Voice wake-up must be enabled; Bluetooth microphone input disables voice interruption.
+- **Global shortcut:** **⌥⌘K** starts listening, sends your question early, or interrupts a reply from any app.
+- **Optional natural voice:** download Qwen3-TTS in the app (about 3.1 GB) for speech generated on the Mac's GPU.
+- **Optional web search:** enable it with the Qianwen provider for questions that need current information. Provider charges may apply.
+- **Response speed:** where supported, XiaoPen defaults to disabled or low-effort reasoning. Available controls depend on the provider and model.
 
-语音识别是独立的一步：如果要使用默认的千问云端识别，先在“设置 → 大脑”选择“千问 AI 平台”并填写 API Key，再切回“ChatGPT 订阅”；识别会继续使用保存的千问密钥，可能产生识别费用。也可以在“设置 → 通用”选择本机识别。
+</details>
 
-### 使用模型 API
+## Quick start
 
-在“设置 → 大脑”中选择平台，通过界面中的控制台链接获取 API Key，再填写密钥与模型。语音对话可优先选择平台当前提供的快速模型，具体名称以控制台为准。密钥只保存在 macOS 钥匙串中。
+**Requirements:** Apple Silicon · macOS 14 or later · Mandarin Chinese dictation resources.
 
-### 使用本机 Ollama
+### Prepare your Mac mini
 
-在 Mac 上运行 Ollama 并准备好模型后，在“设置 → 大脑”中选择本机 Ollama，按界面配置服务地址和模型。模型在本机回答；问题的语音识别仍由“设置 → 通用”中的选择决定。
+| What you need | Setup |
+| --- | --- |
+| 🎙 **External microphone** | Mac mini has no built-in microphone. Connect a microphone recognized by macOS and select it in **System Settings → Sound → Input**. |
+| 🔊 **Audio output** | Use the built-in speaker or select a connected speaker in the system's sound settings. |
+| 🟢 **An awake Mac** | Keep the Mac awake, XiaoPen running and voice wake-up enabled. Pickup distance depends on the microphone, its placement and the room. |
 
-## 隐私
+### Install and say hello
 
-- 待命时，唤醒词在本机识别，声音不保存为录音文件、不实时上传。
-- 默认使用云端识别问题：叫醒后，从唤醒前约 2.5 秒开始到你说完的录音会发送到千问 AI 平台识别。可以在“设置 → 通用”改为完全离线的本机识别。
-- 使用云端识别并开启“直接说话就能打断”时，约 1 秒预录及后续插话会发送到千问云端，用于确认你是否在说话。本机识别模式不使用这种云端打断确认。
-- 唤醒后识别出的**文字**会发送给你选择的模型平台，以生成回答。
-- 查天气时，城市名和约 1 公里精度的坐标会发送给 Open-Meteo。
-- 对话只保存在内存里，退出即清除；提醒保存在本机。
+1. Download the latest `XiaoPen-x.y.z.dmg` from [GitHub Releases](https://github.com/jiaqianjing/xiaopen-mac/releases) and drag XiaoPen into **Applications**.
+2. **The current binary is not Apple-notarized.** If macOS blocks the first launch, follow the first-open guidance in **System Settings → Privacy & Security → Open Anyway**. On systems that offer it, right-click the app and choose **Open**.
+3. Follow the app's onboarding for microphone and speech-recognition permissions. Enable **Mandarin Chinese (China mainland)** dictation in **System Settings → Keyboard → Dictation** so macOS can recognize the wake phrase locally.
+4. [Choose a brain](#choose-your-brain), then select speech recognition in **设置 (Settings) → 通用 (General)**. Cloud recognition uses a Qianwen API key; a missing key or network failure falls back to on-device recognition.
+5. Say **“小喷小喷”**, ask a question and try a follow-up. Check that both the microphone and speaker work as expected.
 
-详见 [隐私说明](docs/PRIVACY.md)。
+## Choose your brain
 
-## 反馈问题
+### ♻️ Your existing ChatGPT subscription
 
-设置 → 关于 → “导出诊断信息…” 可以生成一份不含对话内容和密钥的日志，附在 [Issues](https://github.com/jiaqianjing/xiaopen-mac/issues) 里会很有帮助。
+Open **设置 (Settings) → 大脑 (Brain)**, select **ChatGPT 订阅**, sign in and authorize it in your browser, then select a model. Replies use your existing ChatGPT allowance without a separate model API key. You need network access to OpenAI, and your account's usage limits still apply.
 
-## 支持小喷
+Speech recognition is configured separately. To use cloud recognition, first select **千问 AI 平台** in the Brain settings and save its API key, then switch back to **ChatGPT 订阅**. Recognition continues to use the saved Qianwen key and may incur separate charges. You can choose on-device recognition in General settings instead.
 
-小喷是一个人业余维护的开源项目。如果它帮到了你，欢迎请作者喝杯咖啡 ☕️
+### ☁️ Your model provider or compatible API
 
-- 爱发电：[afdian.com/a/kenjia](https://afdian.com/a/kenjia)（支持按月赞助）
-- 微信 / 支付宝扫码：
+Built-in entries include **Qianwen, DeepSeek, Kimi, MiniMax, Zhipu GLM, Volcengine Ark (Doubao), OpenRouter and Anthropic Claude**, alongside OpenAI-compatible and Anthropic-compatible endpoints.
+
+Choose a provider in Brain settings, use its console link to get an API key, and enter the key and model. Fast models are useful for voice conversations; check your provider's console for its current model names. Keys are stored in the macOS Keychain.
+
+### 🖥️ Local Ollama
+
+Run Ollama on your Mac and prepare a model. Select the local Ollama entry in Brain settings, then configure the service address and model. Replies are generated locally; the speech-recognition choice in General settings still applies independently.
+
+## Privacy
+
+XiaoPen has no backend of its own and collects no analytics.
+
+| Stage | What happens |
+| --- | --- |
+| **Waiting for the wake phrase** | Recognition runs on the Mac. Audio is not saved as recording files or continuously uploaded; a short buffer remains in memory for activation. |
+| **After activation with cloud recognition** | Audio from about **2.5 seconds before the wake phrase** through the end of your question is sent to Qianwen. You can choose on-device recognition instead. |
+| **Speaking to interrupt in cloud mode** | About **1 second of buffered audio**, plus the interruption, is sent to Qianwen to confirm you are speaking. On-device mode does not use this cloud confirmation. |
+| **Generating a reply** | Transcribed text and recent conversation context go to your selected model provider; Ollama runs locally. |
+| **Checking weather** | Your city or coordinates at roughly 1 km precision go to Open-Meteo. |
+| **Storing data** | Conversations stay in memory and are cleared on exit, clearing or model changes. Reminders stay on the Mac. API keys and ChatGPT tokens live in the macOS Keychain. |
+
+See the [full privacy explanation](docs/PRIVACY.md) (Chinese) for permissions and service details.
+
+## Help make it better
+
+Found an awkward wake-up, cut-off sentence or follow-up that did not work? [Open an issue](https://github.com/jiaqianjing/xiaopen-mac/issues) and describe your setup.
+
+In **设置 (Settings) → 关于 (About) → 导出诊断信息… (Export diagnostics)**, you can export logs and a configuration summary without keys. Recognized text is excluded by default. If you enabled **记录识别文字 (Record recognized text)** during that run, review the export before sharing it.
+
+## Support XiaoPen ☕
+
+XiaoPen is a spare-time open-source project maintained by one developer. Sponsorship is optional; starring the repo, reporting issues and sharing ideas also help.
+
+**[Sponsor on Afdian](https://afdian.com/a/kenjia)** · Monthly support is available.
+
+<details>
+<summary><strong>WeChat & Alipay</strong></summary>
 
 <table>
   <tr>
-    <td align="center"><img src="Sources/XiaoPen/Resources/SponsorWeChat.png" width="220" alt="微信赞赏"><br>微信</td>
-    <td align="center"><img src="Sources/XiaoPen/Resources/SponsorAlipay.png" width="220" alt="支付宝赞赏"><br>支付宝</td>
+    <td align="center"><img src="Sources/XiaoPen/Resources/SponsorWeChat.png" width="220" alt="WeChat sponsorship QR code"><br>WeChat</td>
+    <td align="center"><img src="Sources/XiaoPen/Resources/SponsorAlipay.png" width="220" alt="Alipay sponsorship QR code"><br>Alipay</td>
   </tr>
 </table>
 
-也可以在应用的“设置 → 关于 → 支持小喷”里扫码。给项目点个 Star、提交问题和建议，同样是很大的支持。
+The same sponsorship options are available in the app's **About → 支持小喷 (Support XiaoPen)** section.
 
-## 开发
+</details>
+
+## Build from source
 
 ```bash
 swift test
-./scripts/build_app.sh            # 生成 build/XiaoPen-x.y.z.dmg
+./scripts/build_app.sh            # Creates build/XiaoPen-x.y.z.dmg
 ```
 
-架构、打包、签名与各模块细节见 [开发说明](docs/DEVELOPMENT.md)。更新记录见 [CHANGELOG](CHANGELOG.md)。
+[Development guide](docs/DEVELOPMENT.md) · [Changelog](CHANGELOG.md) · [MIT License](LICENSE)
 
-项目采用 [MIT License](LICENSE)。
+The development guide and changelog are currently in Chinese. The header artwork is a concept illustration, not an app screenshot.

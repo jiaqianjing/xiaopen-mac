@@ -1,0 +1,16 @@
+Use case: ads-marketing
+Asset type: a restrained, polished GitHub README hero banner, wide landscape approximately 1536 x 640 pixels, approximately 2.4:1 width-to-height ratio.
+Primary request: introduce XiaoPen as a warm home voice companion, with sparse English typography on the left and a tactile 3D concept illustration on the right.
+Input images: Image 1 is the EXACT Xiaopen mascot character identity, silhouette, face and charcoal/cream palette. Image 2 is a visual style reference ONLY: retain its warm cream paper, tactile 3D illustrated materials and cozy silver computer/microphone/speaker scene. Do not repeat any Chinese text from Image 2 and do not copy its portrait layout.
+Scene/backdrop: soft warm cream background with subtle paper texture, a simple understated home tabletop only under the right-hand composition. Quiet, welcoming, refined, ample whitespace.
+Subjects on the right: one friendly charcoal-black cushion-shaped XiaoPen mascot from Image 1, with its same two cream oval eyes, tiny smile, feet and small waving hand; one compact silver Mac mini-shaped low rounded-square desktop computer with subtle front ports and NO official logo; one external desktop microphone on a short stand; one ordinary independent charcoal speaker with visible speaker driver. These are four separate objects. A discreet microphone cable can connect to the compact computer. Preserve exact mascot identity; make all objects fully visible inside the frame.
+Style/medium: tactile stylized 3D CONCEPT ILLUSTRATION, gently rounded forms, soft diffuse light, matte fabric and metal surfaces. Clearly illustrative, not a realistic product photograph or a screenshot. Extend the same warmth and craft of Image 2 while simplifying background clutter.
+Composition/framing: wide horizontal banner, roughly 2.4:1. Left half reserved for typography, right half arranged compactly with the mascot behind the silver computer, microphone nearby and speaker at the far right. Give every object breathing room and safe margins. Align text on the left, vertically around the middle. Title is large; subtitle medium; final descriptor very small but perfectly legible. Do not cover any text with objects.
+Text (verbatim), ONLY these three items:
+Large title: "XiaoPen"
+Subtitle: "Turn your Mac mini into an AI smart speaker."
+Very small descriptor: "Mandarin-first · Open source · Built for Mac"
+Typography: elegant crisp sans-serif in charcoal, accurate English spelling, capitalization and punctuation. The subtitle may wrap naturally into two lines, but its wording must remain exactly unchanged. Spell XiaoPen with uppercase X and P. Use exact middle-dot separators in the descriptor.
+Color palette: warm ivory cream, charcoal black, softly shaded silver; restrained warm beige tabletop.
+Constraints: only the exact provided English copy; no Chinese text. No interface or screen mockups. Preserve character identity. No official collaboration or certification implication. All equipment and character must fit fully inside the right-hand half.
+Avoid: Apple logo, OpenAI logo, ChatGPT logo, official logos, chip names, whole-home appliance control icons, recycled smart-speaker takeover symbols, smart-home diagrams, QR codes, URLs, feature lists, donation copy, clutter, watermarks, photographic realism, extra devices, monitors or screenshots.
