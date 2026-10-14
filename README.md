@@ -82,7 +82,7 @@ Reminder and volume commands run locally, without a model request. Reminders sur
 | --- | --- |
 | 🎙 **External microphone** | Mac mini has no built-in microphone. Connect a microphone recognized by macOS and select it in **System Settings → Sound → Input**. |
 | 🔊 **Audio output** | Use the built-in speaker or select a connected speaker in the system's sound settings. |
-| 🟢 **An awake Mac** | Keep the Mac awake, XiaoPen running and voice wake-up enabled. Pickup distance depends on the microphone, its placement and the room. |
+| 🟢 **An awake Mac** | Keep XiaoPen running with voice wake-up enabled. While it waits for the wake phrase, XiaoPen keeps the Mac from going to sleep on its own; the display can still turn off and the screen can lock. Choosing **Sleep** manually still puts it to sleep. Pickup distance depends on the microphone, its placement and the room. |
 
 ### Install and say hello
 

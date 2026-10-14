@@ -97,6 +97,11 @@ public struct SettingsView: View {
                     Text("建议 4 个字左右、叠词效果最好。同音字也能唤醒（例如“小盆小盆”）。关闭后待命时不采音，仍可用快捷键或菜单开始说话。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
+                Toggle("待命时防止 Mac 睡眠", isOn: $prefs.keepsMacAwake)
+                    .disabled(!prefs.isWakeWordEnabled)
+                    .onChange(of: prefs.keepsMacAwake) { _, _ in appState.refreshWakeSettings() }
+                Text("Mac 睡眠后麦克风会停止，听不到唤醒词。开启后只阻止系统自动睡眠：显示器照常关闭，锁屏也能唤醒。手动选择“睡眠”时仍会睡眠。")
+                    .font(.footnote).foregroundStyle(.secondary)
                 Toggle("回声消除（推荐）", isOn: $prefs.isEchoCancellationEnabled)
                     .onChange(of: prefs.isEchoCancellationEnabled) { _, _ in appState.refreshWakeSettings() }
                 Picker("回答时打断", selection: $prefs.bargeInMode) {

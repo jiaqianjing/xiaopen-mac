@@ -46,7 +46,7 @@ enum DiagnosticsExporter {
                      "系统：\(ProcessInfo.processInfo.operatingSystemVersionString)",
                      "内存：\(ProcessInfo.processInfo.physicalMemory / 1_073_741_824) GB", ""]
         lines.append("模型：\(prefs.activeProviderID) / \(prefs.providerType.rawValue) / \(prefs.model) / \(URL(string: prefs.baseURL)?.host ?? "-")")
-        lines.append("朗读：\(prefs.ttsEngine.rawValue)，唤醒词启用：\(prefs.isWakeWordEnabled)，继续倾听：\(prefs.isFollowUpEnabled)")
+        lines.append("朗读：\(prefs.ttsEngine.rawValue)，唤醒词启用：\(prefs.isWakeWordEnabled)，继续倾听：\(prefs.isFollowUpEnabled)，防止睡眠：\(prefs.keepsMacAwake)（生效中：\(SystemSleepGuard.shared.isActive)）")
         lines.append("联网搜索：\(prefs.usesWebSearch)")
         lines.append("状态：\(AppState.shared.statusText)；\(AppState.shared.deviceStatus)；\(AppState.shared.recognitionStatus)")
         lines.append("")

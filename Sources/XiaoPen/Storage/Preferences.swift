@@ -238,6 +238,10 @@ public final class AppPreferences: @unchecked Sendable {
     public var isWakeWordEnabled: Bool {
         didSet { defaults.set(isWakeWordEnabled, forKey: "isWakeWordEnabled") }
     }
+    /// Holds off idle system sleep while voice wake-up is on, so the microphone keeps listening.
+    public var keepsMacAwake: Bool {
+        didSet { defaults.set(keepsMacAwake, forKey: "keepsMacAwake") }
+    }
     public var ttsEngine: TTSEngineType {
         didSet { defaults.set(ttsEngine.rawValue, forKey: "ttsEngine") }
     }
@@ -323,6 +327,7 @@ public final class AppPreferences: @unchecked Sendable {
         
         self.wakeWord = defaults.string(forKey: "wakeWord") ?? "小喷小喷"
         self.isWakeWordEnabled = defaults.object(forKey: "isWakeWordEnabled") as? Bool ?? true
+        self.keepsMacAwake = defaults.object(forKey: "keepsMacAwake") as? Bool ?? true
         self.ttsEngine = TTSEngineType(rawValue: defaults.string(forKey: "ttsEngine") ?? "") ?? .system
         self.qwenVoice = QwenVoice(rawValue: defaults.string(forKey: "qwenVoice") ?? "") ?? .serena
         self.qwenVoiceStyle = defaults.string(forKey: "qwenVoiceStyle") ?? "用自然、轻松、温暖的语气说话，像和朋友聊天，避免播音腔。"
