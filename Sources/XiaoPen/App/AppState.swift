@@ -108,6 +108,13 @@ public final class AppState {
     private init() {
         setupAudioPipeline()
         ReminderStore.shared.onFire = { [weak self] reminder in self?.enqueueReminder(reminder) }
+        // Sleep can still happen on request (Apple menu, power button); restart listening afterwards.
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.logger.notice("系统已唤醒 · 重新启动待命")
+                self?.refreshWakeSettings()
+            }
+        }
         if AppPreferences.shared.ttsEngine == .localQwen {
             Task { await SpeechSynthesizer.shared.prepareLocalModel() }
         }
@@ -325,8 +332,10 @@ public final class AppState {
     public func refreshWakeSettings() {
         CloudAudioTap.shared.setEnabled(AppPreferences.shared.speechRecognitionMode == .cloud)
         AudioEngineManager.shared.prefersEchoCancellation = AppPreferences.shared.isEchoCancellationEnabled
-        guard state == .idle else { return }
         let prefs = AppPreferences.shared
+        SystemSleepGuard.shared.setActive(prefs.keepsMacAwake && permissionsGranted
+            && prefs.isWakeWordEnabled && WakeWordDetector.isValid(prefs.wakeWord))
+        guard state == .idle else { return }
         guard permissionsGranted else { return }
         if speechBlockReason != nil {
             pauseCapture()
