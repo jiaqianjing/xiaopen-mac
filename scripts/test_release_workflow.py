@@ -46,7 +46,12 @@ elif "rev-parse" in sys.argv:
     print("a" * 40)
 ''')
         self.shim("codesign", '''
-if "--display" in sys.argv:
+if "--display" in sys.argv and "--entitlements" in sys.argv:
+    if "--xml" in sys.argv:
+        print('<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>com.apple.security.device.audio-input</key><true/></dict></plist>')
+    else:
+        print('[Dict] com.apple.security.device.audio-input = true')
+elif "--display" in sys.argv:
     print(os.environ["TEST_SIGNATURE"], file=sys.stderr)
 if os.environ.get("TEST_CODESIGN_FAIL"):
     sys.exit(1)
@@ -224,6 +229,13 @@ sign_release_app
         self.assertEqual(signatures[-1][-1], str(app))
         self.assertTrue(all("--timestamp" in call and "runtime" in call for call in signatures))
         self.assertTrue(all("--deep" not in call and "--timestamp=none" not in call for call in signatures))
+        entitlement_exports = [call for call in self.calls() if call[0] == "codesign" and "--entitlements" in call and "--display" in call]
+        self.assertEqual(len(entitlement_exports), 1)
+        self.assertIn("--xml", entitlement_exports[0])
+        exported = self.evidence / "app-entitlements.plist"
+        lint = subprocess.run(["plutil", "-lint", str(exported)], capture_output=True, text=True)
+        self.assertEqual(lint.returncode, 0, lint.stderr)
+        self.assertTrue((self.evidence / "app-entitlements-lint.log").exists())
 
     def test_gatekeeper_or_integrity_check_failure_is_fatal(self):
         result = self.run_shell('release_check gatekeeper /usr/bin/false; printf "must not run"')

@@ -111,7 +111,8 @@ sign_release_app() {
         --entitlements "$PROJECT_DIR/Resources/XiaoPen.entitlements" "$STAGED_APP"
     release_check app-codesign codesign --verify --deep --strict --verbose=4 "$STAGED_APP"
     assert_release_signature "$STAGED_APP" true
-    codesign --display --entitlements - "$STAGED_APP" >"$EVIDENCE_DIR/app-entitlements.plist" 2>"$EVIDENCE_DIR/app-entitlements.log"
+    codesign --display --entitlements - --xml "$STAGED_APP" >"$EVIDENCE_DIR/app-entitlements.plist" 2>"$EVIDENCE_DIR/app-entitlements.log"
+    release_check app-entitlements-lint plutil -lint "$EVIDENCE_DIR/app-entitlements.plist"
 }
 
 notarize_and_staple() {
