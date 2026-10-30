@@ -358,6 +358,11 @@ class XcodeNotarizationProofTests(unittest.TestCase):
             compile_result = subprocess.run(["xcrun", "clang", "-arch", "arm64", "-x", "c", "-o", str(executable), "-"],
                                             input="int main(void) { return 0; }\n", capture_output=True, text=True)
             self.assertEqual(compile_result.returncode, 0, compile_result.stderr)
+            # Production archives start with codesign-signed executables. On
+            # older macOS, clang's linker-only ad-hoc layout can differ after
+            # codesign first signs it; establish the same baseline here.
+            baseline_sign = subprocess.run(["codesign", "--force", "--sign", "-", "--timestamp=none", str(executable)], capture_output=True)
+            self.assertEqual(baseline_sign.returncode, 0, baseline_sign.stderr)
             resource = source / "Contents/resource.txt"
             resource.write_text("original resource")
             baseline = xcode_notarize.payload_hash(source)
