@@ -23,13 +23,21 @@ select_release_signing_identity() {
 
 release_preflight() {
     local command_name source_status source_commit
-    [[ -n "$NOTARY_PROFILE" ]] || fail "--release requires --notary-profile (credentials must already be in Keychain)."
     [[ "$MAKE_DMG" == true ]] || fail "--release requires a DMG; --no-dmg is for development."
     [[ -z "$INSTALL_DIR" ]] || fail "--install is for development; install a release from its verified DMG."
+    if [[ "${NOTARY_VIA_XCODE:-false}" == true ]]; then
+        [[ -z "$NOTARY_PROFILE" && -z "$NOTARY_KEYCHAIN" ]] \
+            || fail "--notary-via-xcode cannot be combined with --notary-profile/--notary-keychain."
+        for command_name in xcodebuild python3 lipo; do
+            command -v "$command_name" >/dev/null || fail "Missing Xcode release command: $command_name"
+        done
+    else
+        [[ -n "$NOTARY_PROFILE" ]] || fail "--release requires --notary-profile (credentials must already be in Keychain)."
+        xcrun --find notarytool >/dev/null || fail "Install Xcode notarytool."
+    fi
     for command_name in security hdiutil spctl file shasum; do
         command -v "$command_name" >/dev/null || fail "Missing release command: $command_name"
     done
-    xcrun --find notarytool >/dev/null || fail "Install Xcode notarytool."
     xcrun --find stapler >/dev/null || fail "Install Xcode stapler."
     source_status="$(git -C "$PROJECT_DIR" status --porcelain --untracked-files=normal)" \
         || fail "Cannot inspect release source state."
@@ -42,15 +50,23 @@ release_preflight() {
     mkdir -p "$BUILD_DIR/notarization"
     EVIDENCE_DIR="$(mktemp -d "$BUILD_DIR/notarization/$VERSION-$BUILD_NUMBER-$(date -u +%Y%m%dT%H%M%SZ).XXXXXX")"
     printf 'Release evidence: %s\n' "$EVIDENCE_DIR"
+    release_check gatekeeper-status env LC_ALL=C spctl --status
+    /usr/bin/grep -Fqx 'assessments enabled' "$EVIDENCE_DIR/gatekeeper-status.log" \
+        || fail "Gatekeeper assessments must be enabled for release verification."
     # Validate credentials before an expensive build, without exporting the
     # Keychain item or retaining other projects' notarization history.
-    xcrun notarytool history "${NOTARY_AUTH[@]}" --output-format json \
-        >/dev/null 2>"$EVIDENCE_DIR/credentials-check.log" \
-        || fail "Notarization credentials unavailable; see $EVIDENCE_DIR/credentials-check.log."
+    if [[ "${NOTARY_VIA_XCODE:-false}" == true ]]; then
+        release_check xcode-toolchain xcodebuild -version
+    else
+        xcrun notarytool history "${NOTARY_AUTH[@]}" --output-format json \
+            >/dev/null 2>"$EVIDENCE_DIR/credentials-check.log" \
+            || fail "Notarization credentials unavailable; see $EVIDENCE_DIR/credentials-check.log."
+    fi
     {
         printf 'Version: %s (%s)\nIdentity: %s\nSHA-1: %s\nTeam: %s\n' \
             "$VERSION" "$BUILD_NUMBER" "$RELEASE_IDENTITY_LABEL" "$SIGN_IDENTITY" "$RELEASE_TEAM_ID"
         printf 'Source commit: %s\n' "$source_commit"
+        printf 'Xcode account notarization: %s\n' "${NOTARY_VIA_XCODE:-false}"
     } > "$EVIDENCE_DIR/release-summary.txt"
 }
 
@@ -151,8 +167,23 @@ notarize_and_staple() {
 
 notarize_release_app() {
     local upload_zip="$STAGING_DIR/$APP_NAME-notary.zip"
-    ditto -c -k --sequesterRsrc --keepParent "$STAGED_APP" "$upload_zip"
-    notarize_and_staple "$upload_zip" "$STAGED_APP" app
+    if [[ "${NOTARY_VIA_XCODE:-false}" == true ]]; then
+        notarize_with_xcode app
+        local exported_app
+        exported_app="$(plutil -extract exportedApp raw -o - "$EVIDENCE_DIR/app-xcode-result.json")"
+        [[ -d "$exported_app" ]] || fail "Xcode did not return its notarized app."
+        mv "$STAGED_APP" "$STAGING_DIR/pre-xcode-$APP_NAME.app"
+        ditto "$exported_app" "$STAGED_APP"
+        release_check app-staple xcrun stapler staple "$STAGED_APP"
+        release_check app-stapler-validate xcrun stapler validate "$STAGED_APP"
+        assert_release_signature "$STAGED_APP" true
+        assert_release_signature "$MACOS_DIR/$SPEECH_WORKER_NAME" true
+        codesign --display --entitlements - --xml "$STAGED_APP" >"$EVIDENCE_DIR/app-entitlements.plist" 2>"$EVIDENCE_DIR/app-entitlements.log"
+        release_check app-entitlements-lint plutil -lint "$EVIDENCE_DIR/app-entitlements.plist"
+    else
+        ditto -c -k --sequesterRsrc --keepParent "$STAGED_APP" "$upload_zip"
+        notarize_and_staple "$upload_zip" "$STAGED_APP" app
+    fi
     release_check app-codesign-stapled codesign --verify --deep --strict --verbose=4 "$STAGED_APP"
     release_check app-gatekeeper spctl --assess --type execute --verbose=4 "$STAGED_APP"
     if command -v syspolicy_check >/dev/null; then
@@ -160,11 +191,27 @@ notarize_release_app() {
     fi
 }
 
+notarize_with_xcode() {
+    local label="$1"
+    local options=(--app "$STAGED_APP" --team "$RELEASE_TEAM_ID" --identity "$RELEASE_IDENTITY_LABEL"
+        --fingerprint "$SIGN_IDENTITY" --entitlements "$PROJECT_DIR/Resources/XiaoPen.entitlements"
+        --evidence "$EVIDENCE_DIR" --label "$label")
+    if [[ "$label" == dmg ]]; then options+=(--dmg "$STAGED_DMG"); fi
+    python3 "$PROJECT_DIR/scripts/xcode_notarize.py" "${options[@]}" \
+        || fail "Xcode notarization failed for $label; evidence is retained in $EVIDENCE_DIR."
+}
+
 finish_release_dmg() {
     codesign --force --sign "$SIGN_IDENTITY" --timestamp "$STAGED_DMG"
     release_check dmg-codesign codesign --verify --strict --verbose=4 "$STAGED_DMG"
     assert_release_signature "$STAGED_DMG" false
-    notarize_and_staple "$STAGED_DMG" "$STAGED_DMG" dmg
+    if [[ "${NOTARY_VIA_XCODE:-false}" == true ]]; then
+        notarize_with_xcode dmg
+        release_check dmg-staple xcrun stapler staple "$STAGED_DMG"
+        release_check dmg-stapler-validate xcrun stapler validate "$STAGED_DMG"
+    else
+        notarize_and_staple "$STAGED_DMG" "$STAGED_DMG" dmg
+    fi
     release_check dmg-codesign-stapled codesign --verify --strict --verbose=4 "$STAGED_DMG"
     release_check dmg-gatekeeper spctl --assess --type open --context context:primary-signature --verbose=4 "$STAGED_DMG"
     # Read back the actual app from the final, stapled container. The EXIT trap

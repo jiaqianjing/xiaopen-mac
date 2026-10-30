@@ -22,7 +22,7 @@ open /Applications/XiaoPen.app
 
 签名默认自动选择本机唯一有效的 Apple Development 证书；没有此类证书、存在多个候选或无法读取身份时，脚本会明确提示并退回 ad-hoc 签名。可用 `--sign-identity` 指定证书 SHA-1 哈希或完整名称，`--sign-identity -` 显式使用 ad-hoc。指定证书不可用时打包失败，不会悄悄降级。证书签名保留 `codesign` 自动生成的身份要求，让后续代码变更仍能被系统识别为同一应用；ad-hoc 的身份随代码版本变化，可能反复要求麦克风、语音识别或钥匙串授权，详见 [Apple 签名身份说明](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements)。首次从 ad-hoc 切换到证书签名可能需要重新授权。系统若询问能否使用签名私钥，需要本人确认；脚本不会修改证书信任、隐私授权或钥匙串访问策略。此默认开发路径不执行 Apple 公证，不可作为正式发行验证结果。
 
-正式发行须先提交源码并保持工作树干净，使用独立入口 `./scripts/build_app.sh --release --notary-profile XiaoPen-notary`：记录源提交，仅接受 Developer ID Application 证书，启用 Hardened Runtime 与安全时间戳，依次公证并附票据到应用和 DMG，验证通过后才生成最终 SHA-256。缺少证书或凭据、公证未被接受、附票据或验证失败都会终止；正式发行不会降级为 ad-hoc 或 ZIP，也不支持 `--no-dmg` / `--install`。操作、日志位置和干净 Mac 验收步骤见[正式发行流程](RELEASING.md)。
+正式发行须先提交源码并保持工作树干净，使用独立入口 `./scripts/build_app.sh --release --notary-via-xcode` 复用 Xcode 已登录账户，或二选一使用 `--release --notary-profile XiaoPen-notary`：记录源提交，仅接受 Developer ID Application 证书，启用 Hardened Runtime 与安全时间戳，依次公证并附票据到应用和 DMG，验证通过后才生成最终 SHA-256。缺少证书或凭据、公证未被接受、附票据或验证失败都会终止；正式发行不会降级为 ad-hoc 或 ZIP，也不支持 `--no-dmg` / `--install`。操作、日志位置和干净 Mac 验收步骤见[正式发行流程](RELEASING.md)。
 
 首次启动请允许麦克风与语音识别权限，并在系统设置 → 键盘 → 听写中开启普通话（中国大陆）。系统语音服务被关闭或缺少语言资源时，应用会暂停采音并提供听写设置与重新检测入口；不会继续显示可用的语音待命。应用常驻菜单栏，没有主窗口；点击菜单栏图标打开偏好设置。Mac mini 通常需要外接麦克风。缺少设备、权限或识别服务时，菜单和悬浮窗会提示原因；可在“语音与唤醒”里进入系统权限页并重新检测。
 

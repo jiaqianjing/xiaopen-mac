@@ -2,15 +2,22 @@
 """Exercise release safety gates without certificates, uploads, or Apple services."""
 
 import json
+import importlib.util
 import os
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
 
 PROJECT = Path(__file__).resolve().parent.parent
+sys.dont_write_bytecode = True
+_xcode_spec = importlib.util.spec_from_file_location("xcode_notarize", PROJECT / "scripts/xcode_notarize.py")
+xcode_notarize = importlib.util.module_from_spec(_xcode_spec)
+_xcode_spec.loader.exec_module(xcode_notarize)
 IDENTITY = "Developer ID Application: Release Test (TESTTEAM01)"
 FINGERPRINT = "A" * 40
 UUID = "12345678-1234-1234-1234-123456789abc"
@@ -58,6 +65,11 @@ if os.environ.get("TEST_CODESIGN_FAIL"):
 ''')
         self.shim("file", '''
 print("Mach-O 64-bit executable arm64" if Path(sys.argv[-1]).name in ("XiaoPen", "XiaoPenSpeechWorker", "nested.dylib") else "data")
+''')
+        self.shim("spctl", '''
+print(os.environ.get("TEST_GATEKEEPER_STATUS", "assessments enabled"))
+if os.environ.get("TEST_GATEKEEPER_FAIL"):
+    sys.exit(1)
 ''')
         self.shim("xcrun", '''
 args = sys.argv[1:]
@@ -151,6 +163,19 @@ INSTALL_DIR=""
         self.assertIn("credentials unavailable", result.stderr)
         self.assertFalse(any("submit" in call for call in self.calls()))
 
+    def test_disabled_or_unreadable_gatekeeper_blocks_release(self):
+        for overrides in [{"TEST_GATEKEEPER_STATUS": "assessments disabled"}, {"TEST_GATEKEEPER_FAIL": "1"}]:
+            with self.subTest(overrides=overrides):
+                result = self.run_shell("release_preflight", **overrides)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(any("history" in call for call in self.calls()))
+
+    def test_xcode_and_profile_modes_are_mutually_exclusive(self):
+        result = self.run_shell("NOTARY_VIA_XCODE=true; release_preflight")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("cannot be combined", result.stderr)
+        self.assertEqual(self.calls(), [])
+
     def test_dirty_release_source_is_rejected_before_credentials(self):
         result = self.run_shell("release_preflight", TEST_DIRTY_SOURCE=" M scripts/build_app.sh\n")
         self.assertNotEqual(result.returncode, 0)
@@ -241,6 +266,116 @@ sign_release_app
         result = self.run_shell('release_check gatekeeper /usr/bin/false; printf "must not run"')
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("must not run", result.stdout)
+
+
+class XcodeNotarizationProofTests(unittest.TestCase):
+    def apple_log(self):
+        return {"jobId": UUID, "status": "Accepted", "statusCode": 0, "issues": None,
+                "ticketContents": [{"path": "Carrier.zip/XiaoPen.app/Contents/Resources/Distribution/XiaoPen-1.1.1.dmg",
+                                    "cdhash": "a" * 40}]}
+
+    def test_accepted_dmg_requires_exact_filename_and_codehash(self):
+        log = self.apple_log()
+        proof = xcode_notarize.verify_apple_log(log, UUID.upper(), "XiaoPen-1.1.1.dmg", "a" * 40)
+        self.assertEqual(len(proof["matchingTickets"]), 1)
+        for filename, codehash in [("Other.dmg", "a" * 40), ("XiaoPen-1.1.1.dmg", "b" * 40)]:
+            with self.subTest(filename=filename, codehash=codehash):
+                with self.assertRaises(xcode_notarize.NotarizationError):
+                    xcode_notarize.verify_apple_log(log, UUID, filename, codehash)
+
+    def test_accepted_carrier_without_nested_dmg_ticket_is_rejected(self):
+        log = self.apple_log()
+        log["ticketContents"] = [{"path": "Carrier.zip/XiaoPen.app", "cdhash": "a" * 40}]
+        with self.assertRaises(xcode_notarize.NotarizationError):
+            xcode_notarize.verify_apple_log(log, UUID, "XiaoPen-1.1.1.dmg", "a" * 40)
+
+    def test_dmg_ticket_must_be_in_the_exact_carrier_resource_path(self):
+        ticket_path = "XiaoPen.app/Contents/Resources/Distribution/XiaoPen-1.1.1.dmg"
+        xcode_notarize.verify_apple_log(self.apple_log(), UUID, ticket_path, "a" * 40)
+        log = self.apple_log()
+        log["ticketContents"][0]["path"] = "Other.zip/Other.app/XiaoPen-1.1.1.dmg"
+        with self.assertRaises(xcode_notarize.NotarizationError):
+            xcode_notarize.verify_apple_log(log, UUID, ticket_path, "a" * 40)
+
+    def test_rejects_mismatched_submission_invalid_status_or_apple_errors(self):
+        for changes in [{"jobId": "different"}, {"status": "In Progress"}, {"statusCode": 4000},
+                        {"issues": [{"severity": "error", "message": "bad code"}]}]:
+            with self.subTest(changes=changes):
+                log = dict(self.apple_log(), **changes)
+                with self.assertRaises(xcode_notarize.NotarizationError):
+                    xcode_notarize.verify_apple_log(log, UUID, "XiaoPen-1.1.1.dmg", "a" * 40)
+
+    def test_warnings_are_retained_without_overriding_accepted_verdict(self):
+        log = dict(self.apple_log(), issues=[{"severity": "warning", "message": "review warning"}])
+        proof = xcode_notarize.verify_apple_log(log, UUID, "XiaoPen-1.1.1.dmg", "a" * 40)
+        self.assertEqual(proof["warningCount"], 1)
+
+    def test_app_ticket_requires_apple_silicon_architecture(self):
+        log = dict(self.apple_log(), ticketContents=[{"path": "App.zip/XiaoPen.app", "cdhash": "a" * 40, "arch": "x86_64"}])
+        with self.assertRaises(xcode_notarize.NotarizationError):
+            xcode_notarize.verify_apple_log(log, UUID, "XiaoPen.app", "a" * 40, "arm64")
+
+    def test_submission_must_belong_to_selected_developer_id_team(self):
+        record = {"identifier": UUID, "teamID": "TESTTEAM01", "uploadDestination": "Developer ID",
+                  "processingEvent": {"state": "processing"}}
+        self.assertEqual(xcode_notarize.matching_distribution({"Distributions": [record]}, "TESTTEAM01"), UUID)
+        for changes in [{"teamID": "WRONGTEAM0"}, {"uploadDestination": "App Store Connect"}, {"identifier": "malformed"}]:
+            with self.subTest(changes=changes):
+                with self.assertRaises(xcode_notarize.NotarizationError):
+                    xcode_notarize.matching_distribution({"Distributions": [dict(record, **changes)]}, "TESTTEAM01")
+
+    def test_only_processing_error_is_retryable(self):
+        self.assertTrue(xcode_notarize.is_processing_error('error: Archive "app.xcarchive" is processing and not ready for distribution.\n** EXPORT FAILED **'))
+        self.assertFalse(xcode_notarize.is_processing_error('error: Account authentication failed while processing archive.'))
+        self.assertFalse(xcode_notarize.is_processing_error('** EXPORT FAILED **'))
+        self.assertFalse(xcode_notarize.is_processing_error('error: Archive "app.xcarchive" is processing and not ready for distribution.\nerror: Authentication failed.'))
+
+    def test_external_and_broken_bundle_symlinks_are_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            app = root / "XiaoPen.app"
+            app.mkdir()
+            (app / "file").write_text("inside")
+            (app / "link").symlink_to("file")
+            xcode_notarize.validate_symlinks(app)
+            (app / "link").unlink()
+            for destination in [root / "outside", root / "does-not-exist"]:
+                with self.subTest(destination=destination):
+                    if destination.name == "outside":
+                        destination.write_text("outside")
+                    (app / "link").symlink_to(destination)
+                    with self.assertRaises(xcode_notarize.NotarizationError):
+                        xcode_notarize.validate_symlinks(app)
+                    (app / "link").unlink()
+
+    def test_payload_fidelity_allows_resigning_but_rejects_code_and_resource_changes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source.app"
+            executable = source / "Contents/MacOS/probe"
+            executable.parent.mkdir(parents=True)
+            compile_result = subprocess.run(["xcrun", "clang", "-arch", "arm64", "-x", "c", "-o", str(executable), "-"],
+                                            input="int main(void) { return 0; }\n", capture_output=True, text=True)
+            self.assertEqual(compile_result.returncode, 0, compile_result.stderr)
+            resource = source / "Contents/resource.txt"
+            resource.write_text("original resource")
+            baseline = xcode_notarize.payload_hash(source)
+            exported = root / "exported.app"
+            shutil.copytree(source, exported)
+            exported_code = exported / "Contents/MacOS/probe"
+            result = subprocess.run(["codesign", "--force", "--sign", "-", "--timestamp=none", str(exported_code)], capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            (exported / "Contents/_CodeSignature").mkdir()
+            (exported / "Contents/_CodeSignature/CodeResources").write_bytes(b"new seal")
+            (exported / "Contents/CodeResources").write_bytes(b"stapled ticket")
+            self.assertEqual(xcode_notarize.payload_hash(exported), baseline)
+            (exported / "Contents/resource.txt").write_text("changed resource")
+            self.assertNotEqual(xcode_notarize.payload_hash(exported), baseline)
+            (exported / "Contents/resource.txt").write_text("original resource")
+            code = bytearray(exported_code.read_bytes())
+            code[8192] ^= 1
+            exported_code.write_bytes(code)
+            self.assertNotEqual(xcode_notarize.payload_hash(exported), baseline)
 
 
 if __name__ == "__main__":

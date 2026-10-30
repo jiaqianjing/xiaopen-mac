@@ -17,6 +17,7 @@ SIGN_IDENTITY=""
 RELEASE=false
 NOTARY_PROFILE=""
 NOTARY_KEYCHAIN=""
+NOTARY_VIA_XCODE=false
 MOUNTED_DMG=""
 
 usage() {
@@ -37,9 +38,11 @@ By default, only the DMG/ZIP is retained; the temporary .app is cleaned up.
   --release         Require Developer ID, Hardened Runtime, Apple notarization,
                     stapled app/DMG tickets and Gatekeeper verification.
   --notary-profile NAME
-                    Existing notarytool Keychain profile (required for release).
+                    Keychain authentication alternative to --notary-via-xcode.
   --notary-keychain PATH
                     Optional Keychain containing the notarization profile.
+  --notary-via-xcode Use the existing Xcode account via archive upload/export;
+                    mutually exclusive with notary-profile/keychain options.
   -h, --help         Show this help.
 
 The active toolchain comes from xcrun / xcode-select; DEVELOPER_DIR is respected.
@@ -62,6 +65,7 @@ while [[ $# -gt 0 ]]; do
         --keep-app) KEEP_APP=true; shift ;;
         --no-dmg) MAKE_DMG=false; KEEP_APP=true; shift ;;
         --release) RELEASE=true; shift ;;
+        --notary-via-xcode) NOTARY_VIA_XCODE=true; shift ;;
         --notary-profile|--notary-keychain)
             [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || fail "$1 requires a value."
             if [[ "$1" == --notary-profile ]]; then NOTARY_PROFILE="$2"; else NOTARY_KEYCHAIN="$2"; fi
@@ -87,7 +91,7 @@ done
 [[ -f "$PLIST_SOURCE" ]] || fail "Missing Info.plist: $PLIST_SOURCE"
 [[ -f "$ICON_SOURCE" ]] || fail "Missing app icon: $ICON_SOURCE"
 [[ ! -L "$BUILD_DIR" ]] || fail "The build directory must not be a symlink."
-[[ "$RELEASE" == true || ( -z "$NOTARY_PROFILE" && -z "$NOTARY_KEYCHAIN" ) ]] \
+[[ "$RELEASE" == true || ( -z "$NOTARY_PROFILE" && -z "$NOTARY_KEYCHAIN" && "$NOTARY_VIA_XCODE" == false ) ]] \
     || fail "Notarization options require --release."
 
 for command_name in xcrun ditto plutil codesign; do
@@ -135,7 +139,8 @@ select_signing_identity() {
 if [[ "$RELEASE" == true ]]; then
     # shellcheck source=release_support.sh
     source "$PROJECT_DIR/scripts/release_support.sh"
-    [[ -n "$NOTARY_PROFILE" ]] || fail "--release requires --notary-profile."
+    [[ -n "$NOTARY_PROFILE" || "$NOTARY_VIA_XCODE" == true ]] \
+        || fail "--release requires --notary-profile or --notary-via-xcode."
     select_release_signing_identity
     release_preflight
 else
