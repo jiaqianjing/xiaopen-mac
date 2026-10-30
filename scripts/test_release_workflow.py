@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 PROJECT = Path(__file__).resolve().parent.parent
@@ -376,6 +377,36 @@ class XcodeNotarizationProofTests(unittest.TestCase):
             code[8192] ^= 1
             exported_code.write_bytes(code)
             self.assertNotEqual(xcode_notarize.payload_hash(exported), baseline)
+
+    def test_private_dmg_copy_omits_finder_metadata_and_preserves_source(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "original.dmg"
+            destination = Path(temporary) / "private-resource.dmg"
+            source.write_bytes(b"signed DMG data fork fixture")
+            finder_info = b"TEXTttxt" + b"\0" * 24
+            quarantine = b"0081;69032200;Safari;TEST"
+            subprocess.run(["xattr", "-wx", "com.apple.FinderInfo", finder_info.hex(), str(source)], check=True, capture_output=True)
+            subprocess.run(["xattr", "-wx", "com.apple.quarantine", quarantine.hex(), str(source)], check=True, capture_output=True)
+            original_digest = xcode_notarize.sha256(source)
+            xcode_notarize.copy_dmg_resource(source, destination)
+            self.assertEqual(xcode_notarize.sha256(destination), original_digest)
+            self.assertEqual(xcode_notarize.sha256(source), original_digest)
+            destination_attributes = subprocess.run(["xattr", str(destination)], check=True, capture_output=True, text=True).stdout.splitlines()
+            self.assertNotIn("com.apple.FinderInfo", destination_attributes)
+            self.assertNotIn("com.apple.ResourceFork", destination_attributes)
+            for name, expected in [("com.apple.FinderInfo", finder_info), ("com.apple.quarantine", quarantine)]:
+                actual = subprocess.run(["xattr", "-px", name, str(source)], check=True, capture_output=True, text=True).stdout
+                self.assertEqual(bytes.fromhex(actual), expected)
+
+    def test_validation_failure_saves_private_diagnostics_without_command_arguments(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            log = Path(temporary) / "dmg-validation.log"
+            with mock.patch.object(xcode_notarize, "VALIDATION_LOG", log):
+                with self.assertRaises(xcode_notarize.NotarizationError):
+                    xcode_notarize.command([sys.executable, "-c", "import sys;sys.stderr.write('Finder metadata rejected');sys.exit(2)", "private-argument-sentinel"])
+            self.assertIn("Finder metadata rejected", log.read_text())
+            self.assertNotIn("private-argument-sentinel", log.read_text())
+            self.assertEqual(log.stat().st_mode & 0o777, 0o600)
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ import argparse
 import datetime
 import hashlib
 import json
+import os
 from pathlib import Path
 import plistlib
 import re
@@ -19,6 +20,9 @@ import sys
 import tempfile
 import time
 import uuid
+
+
+VALIDATION_LOG = None
 
 
 class NotarizationError(RuntimeError):
@@ -31,9 +35,32 @@ def require(condition, message):
 
 
 def command(parts, timeout=120):
-    result = subprocess.run([str(part) for part in parts], capture_output=True, timeout=timeout)
-    require(result.returncode == 0, f"Validation command failed: {parts[0]} (exit {result.returncode})")
+    tool = Path(str(parts[0])).name
+    try:
+        result = subprocess.run([str(part) for part in parts], capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired as error:
+        save_validation_failure(tool, "timeout", error.stdout, error.stderr)
+        raise
+    if result.returncode != 0:
+        save_validation_failure(tool, result.returncode, result.stdout, result.stderr)
+        detail = f"; see {VALIDATION_LOG}" if VALIDATION_LOG else ""
+        raise NotarizationError(f"Validation command failed: {tool} (exit {result.returncode}){detail}")
     return result.stdout, result.stderr
+
+
+def save_validation_failure(tool, status, stdout, stderr):
+    if VALIDATION_LOG is None:
+        return
+    # These are validation/copy tools only. Log their diagnostics privately,
+    # never command arguments, account material, or credential operations.
+    descriptor = os.open(VALIDATION_LOG, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    with os.fdopen(descriptor, "ab") as stream:
+        stream.write(f"{tool} failed ({status})\n".encode())
+        for name, output in (("stdout", stdout), ("stderr", stderr)):
+            if output:
+                stream.write(name.encode() + b":\n")
+                stream.write(output if isinstance(output, bytes) else output.encode())
+                stream.write(b"\n")
 
 
 def sha256(path):
@@ -42,6 +69,15 @@ def sha256(path):
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def copy_dmg_resource(source, destination):
+    # hdiutil's FinderInfo/resource metadata is valid on the release DMG, but
+    # forbidden inside a signed app resource. Copy only the data fork into the
+    # private carrier; do not alter the source DMG or any quarantine attribute.
+    expected = sha256(source)
+    shutil.copyfile(source, destination)
+    require(sha256(destination) == expected, "Copying changed the signed DMG")
 
 
 def bundle_hash(app):
@@ -191,7 +227,7 @@ def prepare_archive(args, source_app, evidence, wanted_entitlements):
         embedded = archived_app / "Contents/Resources/Distribution" / dmg.name
         require(not embedded.exists(), "DMG carrier resource already exists")
         embedded.parent.mkdir(parents=True, exist_ok=True)
-        command(["ditto", dmg, embedded])
+        copy_dmg_resource(dmg, embedded)
         require(sha256(embedded) == dmg_sha, "Copying changed the signed DMG")
         # Embedded code and the DMG are already signed. Only the private outer
         # resource seal changed; re-sign it without touching the shipped app.
@@ -226,6 +262,7 @@ def prepare_archive(args, source_app, evidence, wanted_entitlements):
 
 
 def notarize(args):
+    global VALIDATION_LOG
     require(sys.platform == "darwin", "Xcode notarization requires macOS")
     require(re.fullmatch(r"[A-Z0-9]{10}", args.team), "Invalid Developer team")
     require(args.identity.startswith("Developer ID Application: ") and args.identity.endswith("(" + args.team + ")"),
@@ -236,6 +273,7 @@ def notarize(args):
     source_app = args.app.expanduser().resolve(strict=True)
     require(source_app.is_dir() and source_app.suffix == ".app", "Input must be an app bundle")
     evidence = args.evidence.expanduser().resolve(strict=True)
+    VALIDATION_LOG = evidence / (args.label + "-validation.log")
     with args.entitlements.open("rb") as stream:
         wanted_entitlements = plistlib.load(stream)
     archive, options, prepared, source_info = prepare_archive(args, source_app, evidence, wanted_entitlements)
