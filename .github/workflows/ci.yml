@@ -20,4 +20,9 @@ jobs:
           path: .build
           key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
       - name: Test
-        run: swift test --parallel
+        run: >-
+          swift test --parallel
+          -Xxcbuild "METAL_EXEC=$(xcrun --find metal)"
+          -Xxcbuild "METALLIB_EXEC=$(xcrun --find metallib)"
+      - name: Release workflow safety gates
+        run: python3 scripts/test_release_workflow.py

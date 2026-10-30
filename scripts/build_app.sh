@@ -14,6 +14,10 @@ KEEP_APP=false
 BIN_DIR=""
 INSTALL_DIR=""
 SIGN_IDENTITY=""
+RELEASE=false
+NOTARY_PROFILE=""
+NOTARY_KEYCHAIN=""
+MOUNTED_DMG=""
 
 usage() {
     cat <<'USAGE'
@@ -30,13 +34,20 @@ By default, only the DMG/ZIP is retained; the temporary .app is cleaned up.
                      Existing apps must be backed up or moved first.
   --sign-identity ID Select a signing certificate by SHA-1 hash or full name.
                      Use - to explicitly request ad-hoc signing.
+  --release         Require Developer ID, Hardened Runtime, Apple notarization,
+                    stapled app/DMG tickets and Gatekeeper verification.
+  --notary-profile NAME
+                    Existing notarytool Keychain profile (required for release).
+  --notary-keychain PATH
+                    Optional Keychain containing the notarization profile.
   -h, --help         Show this help.
 
 The active toolchain comes from xcrun / xcode-select; DEVELOPER_DIR is respected.
 Signing automatically uses an Apple Development identity only when exactly one
 is valid. Otherwise it falls back to ad-hoc with a notice. Certificate signing
 keeps codesign's default designated requirement; macOS may ask to use its key.
-DMG creation falls back to a ZIP if hdiutil cannot create a disk image.
+Development DMG creation falls back to ZIP. Release packaging fails closed and
+retains notarization evidence under build/notarization and build/SHA256SUMS.
 USAGE
 }
 
@@ -50,6 +61,12 @@ while [[ $# -gt 0 ]]; do
         --skip-build) SKIP_BUILD=true; shift ;;
         --keep-app) KEEP_APP=true; shift ;;
         --no-dmg) MAKE_DMG=false; KEEP_APP=true; shift ;;
+        --release) RELEASE=true; shift ;;
+        --notary-profile|--notary-keychain)
+            [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || fail "$1 requires a value."
+            if [[ "$1" == --notary-profile ]]; then NOTARY_PROFILE="$2"; else NOTARY_KEYCHAIN="$2"; fi
+            shift 2
+            ;;
         --sign-identity)
             [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || fail "$1 requires a hash, name, or -."
             SIGN_IDENTITY="$2"
@@ -70,6 +87,8 @@ done
 [[ -f "$PLIST_SOURCE" ]] || fail "Missing Info.plist: $PLIST_SOURCE"
 [[ -f "$ICON_SOURCE" ]] || fail "Missing app icon: $ICON_SOURCE"
 [[ ! -L "$BUILD_DIR" ]] || fail "The build directory must not be a symlink."
+[[ "$RELEASE" == true || ( -z "$NOTARY_PROFILE" && -z "$NOTARY_KEYCHAIN" ) ]] \
+    || fail "Notarization options require --release."
 
 for command_name in xcrun ditto plutil codesign; do
     command -v "$command_name" >/dev/null || fail "Missing command: $command_name"
@@ -113,14 +132,27 @@ select_signing_identity() {
         printf 'macOS may request permission to use the signing key.\n'
     fi
 }
-select_signing_identity
+if [[ "$RELEASE" == true ]]; then
+    # shellcheck source=release_support.sh
+    source "$PROJECT_DIR/scripts/release_support.sh"
+    [[ -n "$NOTARY_PROFILE" ]] || fail "--release requires --notary-profile."
+    select_release_signing_identity
+    release_preflight
+else
+    select_signing_identity
+fi
 
 SWIFT_PATH="$(xcrun --find swift)"
 printf 'Toolchain: %s\n' "$SWIFT_PATH"
 if [[ "$SKIP_BUILD" == false ]]; then
     printf 'Building %s %s (%s), Release…\n' "$APP_NAME" "$VERSION" "$BUILD_NUMBER"
-    "$SWIFT_PATH" build --package-path "$PROJECT_DIR" -c release --product "$APP_NAME"
-    "$SWIFT_PATH" build --package-path "$PROJECT_DIR" -c release --product "$SPEECH_WORKER_NAME"
+    # Xcode may retain a placeholder metal executable after installing the
+    # separate Metal Toolchain. Pass the tools resolved by xcrun to Swiftbuild.
+    METAL_PATH="$(xcrun --find metal)" || fail "Install Xcode's Metal Toolchain."
+    METALLIB_PATH="$(xcrun --find metallib)" || fail "Install Xcode's Metal Toolchain."
+    SWIFT_BUILD_OPTIONS=(-Xxcbuild "METAL_EXEC=$METAL_PATH" -Xxcbuild "METALLIB_EXEC=$METALLIB_PATH")
+    "$SWIFT_PATH" build --package-path "$PROJECT_DIR" -c release --product "$APP_NAME" "${SWIFT_BUILD_OPTIONS[@]}"
+    "$SWIFT_PATH" build --package-path "$PROJECT_DIR" -c release --product "$SPEECH_WORKER_NAME" "${SWIFT_BUILD_OPTIONS[@]}"
 fi
 if [[ -z "$BIN_DIR" ]]; then
     BIN_DIR="$("$SWIFT_PATH" build --package-path "$PROJECT_DIR" -c release --show-bin-path)"
@@ -149,6 +181,9 @@ done
 mkdir -p "$BUILD_DIR"
 STAGING_DIR="$(mktemp -d "$BUILD_DIR/.xiaopen-package.XXXXXX")"
 cleanup_staging() {
+    if [[ -n "$MOUNTED_DMG" ]]; then
+        hdiutil detach "$MOUNTED_DMG" || { printf 'Could not detach release verification mount: %s\n' "$MOUNTED_DMG" >&2; return; }
+    fi
     [[ "$STAGING_DIR" == "$BUILD_DIR"/.xiaopen-package.* && ! -L "$STAGING_DIR" ]] || return
     if [[ ! -e "$BUNDLE_DIR" && -d "$STAGING_DIR/previous-$APP_NAME.app" ]]; then
         mv "$STAGING_DIR/previous-$APP_NAME.app" "$BUNDLE_DIR"
@@ -179,10 +214,15 @@ done
 printf 'APPL????' > "$CONTENTS_DIR/PkgInfo"
 
 printf 'Signing and verifying the local app…\n'
-codesign --force --sign "$SIGN_IDENTITY" --timestamp=none "$MACOS_DIR/$SPEECH_WORKER_NAME"
-codesign --verify --strict --verbose=2 "$MACOS_DIR/$SPEECH_WORKER_NAME"
-codesign --force --sign "$SIGN_IDENTITY" --timestamp=none "$STAGED_APP"
-codesign --verify --deep --strict --verbose=2 "$STAGED_APP"
+if [[ "$RELEASE" == true ]]; then
+    sign_release_app
+    notarize_release_app
+else
+    codesign --force --sign "$SIGN_IDENTITY" --timestamp=none "$MACOS_DIR/$SPEECH_WORKER_NAME"
+    codesign --verify --strict --verbose=2 "$MACOS_DIR/$SPEECH_WORKER_NAME"
+    codesign --force --sign "$SIGN_IDENTITY" --timestamp=none "$STAGED_APP"
+    codesign --verify --deep --strict --verbose=2 "$STAGED_APP"
+fi
 codesign --display -r- "$STAGED_APP"
 plutil -lint "$CONTENTS_DIR/Info.plist"
 
@@ -203,7 +243,16 @@ if [[ "$MAKE_DMG" == true ]]; then
     ditto "$STAGED_APP" "$DMG_STAGING_DIR/$APP_NAME.app"
     ln -s /Applications "$DMG_STAGING_DIR/Applications"
     STAGED_DMG="$STAGING_DIR/$APP_NAME-$VERSION.dmg"
-    if command -v hdiutil >/dev/null \
+    if [[ "$RELEASE" == true ]]; then
+        release_check dmg-create hdiutil create -volname "$APP_NAME" -srcfolder "$DMG_STAGING_DIR" -format UDZO "$STAGED_DMG"
+        finish_release_dmg
+        mv -f "$STAGED_DMG" "$BUILD_DIR/$APP_NAME-$VERSION.dmg"
+        # Only final stapled bytes receive a checksum. Do not emit a manifest
+        # for intermediate/unverified files or accidentally include older DMGs.
+        (cd "$BUILD_DIR" && shasum -a 256 "$APP_NAME-$VERSION.dmg") > "$EVIDENCE_DIR/SHA256SUMS"
+        cp "$EVIDENCE_DIR/SHA256SUMS" "$BUILD_DIR/SHA256SUMS"
+        printf 'Verified release installer: %s\n' "$BUILD_DIR/$APP_NAME-$VERSION.dmg"
+    elif command -v hdiutil >/dev/null \
         && hdiutil create -volname "$APP_NAME" -srcfolder "$DMG_STAGING_DIR" -format UDZO "$STAGED_DMG" \
         && hdiutil verify "$STAGED_DMG"; then
         mv -f "$STAGED_DMG" "$BUILD_DIR/$APP_NAME-$VERSION.dmg"

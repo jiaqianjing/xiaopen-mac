@@ -87,10 +87,12 @@ Reminder and volume commands run locally, without a model request. Reminders sur
 ### Install and say hello
 
 1. Download the latest `XiaoPen-x.y.z.dmg` from [GitHub Releases](https://github.com/jiaqianjing/xiaopen-mac/releases) and drag XiaoPen into **Applications**.
-2. **The current binary is not Apple-notarized.** If macOS blocks the first launch, follow the first-open guidance in **System Settings → Privacy & Security → Open Anyway**. On systems that offer it, right-click the app and choose **Open**.
+2. **Version 1.1.0 and earlier are not Apple-notarized.** If macOS blocks those versions, follow the first-open guidance in **System Settings → Privacy & Security → Open Anyway**. For a newer version, check its release notes for the signing and notarization result. A normal “downloaded from the internet” confirmation may still appear.
 3. Follow the app's onboarding for microphone and speech-recognition permissions. Enable **Mandarin Chinese (China mainland)** dictation in **System Settings → Keyboard → Dictation** so macOS can recognize the wake phrase locally.
 4. [Choose a brain](#choose-your-brain), then select speech recognition in **设置 (Settings) → 通用 (General)**. Cloud recognition uses a Qianwen API key; a missing key or network failure falls back to on-device recognition.
 5. Say **“小喷小喷”**, ask a question and try a follow-up. Check that both the microphone and speaker work as expected.
+
+Gatekeeper checks the downloaded app. Microphone, speech-recognition and Keychain access are separate macOS permissions; signing and notarization do not remove those prompts.
 
 ## Choose your brain
 
@@ -155,9 +157,9 @@ The same sponsorship options are available in the app's **About → 支持小喷
 
 ```bash
 swift test
-./scripts/build_app.sh            # Creates build/XiaoPen-x.y.z.dmg
+./scripts/build_app.sh            # Local development package (not notarized)
 ```
 
-[Development guide](docs/DEVELOPMENT.md) · [Changelog](CHANGELOG.md) · [MIT License](LICENSE)
+[Development guide](docs/DEVELOPMENT.md) · [Signed release workflow](docs/RELEASING.md) · [Changelog](CHANGELOG.md) · [MIT License](LICENSE)
 
 The development guide and changelog are currently in Chinese. The header artwork is a concept illustration, not an app screenshot.
