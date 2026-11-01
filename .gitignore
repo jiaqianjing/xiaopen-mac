@@ -5,6 +5,7 @@
 xcuserdata/
 DerivedData/
 .swiftpm/xcode
+__pycache__/
 *.xcodeproj
 *.xcworkspace
 !default.sublime-project
