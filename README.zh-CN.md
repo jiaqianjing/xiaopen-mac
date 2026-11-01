@@ -11,7 +11,7 @@
 <p align="center">接上麦克风 · 自己选大脑 · 叫一声就能聊</p>
 
 <p align="center">
-  <a href="https://github.com/jiaqianjing/xiaopen-mac/releases"><img src="https://img.shields.io/github/v/release/jiaqianjing/xiaopen-mac?style=flat-square&amp;color=d7b996&amp;labelColor=292622" alt="最新版本"></a>
+  <a href="https://github.com/jiaqianjing/xiaopen-mac/releases/latest"><img src="https://img.shields.io/github/v/release/jiaqianjing/xiaopen-mac?style=flat-square&amp;color=d7b996&amp;labelColor=292622" alt="最新版本"></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-d7b996?style=flat-square&amp;labelColor=292622" alt="macOS 14 或更新">
   <img src="https://img.shields.io/badge/chip-Apple%20Silicon-d7b996?style=flat-square&amp;labelColor=292622" alt="需要 Apple 芯片">
   <img src="https://img.shields.io/badge/voice-Mandarin-d7b996?style=flat-square&amp;labelColor=292622" alt="普通话语音工作流">
@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/jiaqianjing/xiaopen-mac/releases/download/v1.1.1/XiaoPen-1.1.1.dmg">下载 1.1.1</a> ·
+  <a href="https://github.com/jiaqianjing/xiaopen-mac/releases/latest">下载</a> ·
   <a href="#installation">安装</a> ·
   <a href="#brain">选择大脑</a> ·
   <a href="#privacy">隐私</a>
@@ -73,15 +73,15 @@
 
 ### 安装小喷
 
-1. 下载 [XiaoPen 1.1.1（Apple 芯片）](https://github.com/jiaqianjing/xiaopen-mac/releases/download/v1.1.1/XiaoPen-1.1.1.dmg)，打开 DMG 后把小喷拖进“应用程序”。[SHA-256 校验](https://github.com/jiaqianjing/xiaopen-mac/releases/download/v1.1.1/SHA256SUMS) · [版本说明](https://github.com/jiaqianjing/xiaopen-mac/releases/tag/v1.1.1)。
-2. **1.1.1 的应用与 DMG 均使用 Developer ID 签名并经过 Apple 公证。** 从“应用程序”正常打开小喷即可；系统正常的“从互联网下载，是否打开”确认仍可能出现。安装用户无需配置开发者凭据。
+1. 打开[最新正式版](https://github.com/jiaqianjing/xiaopen-mac/releases/latest)，下载该页的 `XiaoPen-x.y.z.dmg`，打开 DMG 后把小喷拖进“应用程序”。[SHA-256 校验](https://github.com/jiaqianjing/xiaopen-mac/releases/latest/download/SHA256SUMS) · [版本说明](https://github.com/jiaqianjing/xiaopen-mac/releases/latest)。
+2. **小喷从 1.1.1 引入 Developer ID 签名与应用/DMG 的 Apple 公证。** 从“应用程序”正常打开小喷即可；系统正常的“从互联网下载，是否打开”确认仍可能出现。安装用户无需配置开发者凭据。
 3. 跟着首次使用引导完成麦克风、语音识别授权，在“系统设置 → 键盘 → 听写”中开启普通话（中国大陆），供本机识别唤醒词和中文问题。
 4. 按[下面的说明](#brain)选择“大脑”，在“设置 → 通用”选择问题的语音识别方式。默认云端识别使用千问 API Key；未配置密钥或网络出错时，会自动改用本机识别。
 5. 试喊“小喷小喷”，问一个问题，再接着追问，确认麦克风与声音输出正常。
 
 Gatekeeper 检查下载应用的来源；麦克风、语音识别和钥匙串访问是独立的 macOS 授权。签名与公证不会取消这些正常权限提示。
 
-1.1.0 及更早版本未经 Apple 公证；上面的默认下载已指向签名并公证的 1.1.1。[发行验证记录](https://github.com/jiaqianjing/xiaopen-mac/releases/download/v1.1.1/verification.json) 说明实际验收范围。
+1.1.0 及更早版本未经 Apple 公证。所选版本的实际签名、公证与验收范围，以其 Release 页附带的 `verification.json` 为准。[最新版本验证记录](https://github.com/jiaqianjing/xiaopen-mac/releases/latest/download/verification.json)。
 
 <a id="brain"></a>
 
@@ -142,6 +142,8 @@ Gatekeeper 检查下载应用的来源；麦克风、语音识别和钥匙串访
 swift test
 ./scripts/build_app.sh            # 本地开发包，未经 Apple 公证
 ```
+
+维护者发行：[准备草稿、分级验收，再显式发布](docs/RELEASING.md#release-workflow)。准备完成后会停等真实人工检查，不自动创建测试 VM，也不代替听感确认。
 
 架构、打包与各模块细节见[开发说明](docs/DEVELOPMENT.md)；Developer ID 签名、公证与发行验收见[正式发行流程](docs/RELEASING.md)。更新记录见 [CHANGELOG](CHANGELOG.md)。
 

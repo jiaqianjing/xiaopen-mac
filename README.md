@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/jiaqianjing/xiaopen-mac/releases"><img src="https://img.shields.io/github/v/release/jiaqianjing/xiaopen-mac?style=flat-square&amp;color=d7b996&amp;labelColor=292622" alt="Latest release"></a>
+  <a href="https://github.com/jiaqianjing/xiaopen-mac/releases/latest"><img src="https://img.shields.io/github/v/release/jiaqianjing/xiaopen-mac?style=flat-square&amp;color=d7b996&amp;labelColor=292622" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-d7b996?style=flat-square&amp;labelColor=292622" alt="macOS 14 or later">
   <img src="https://img.shields.io/badge/chip-Apple%20Silicon-d7b996?style=flat-square&amp;labelColor=292622" alt="Apple Silicon required">
   <img src="https://img.shields.io/badge/voice-Mandarin-d7b996?style=flat-square&amp;labelColor=292622" alt="Mandarin voice workflow">
@@ -22,7 +22,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/jiaqianjing/xiaopen-mac/releases/download/v1.1.1/XiaoPen-1.1.1.dmg"><strong>⬇ Download 1.1.1</strong></a> ·
+  <a href="https://github.com/jiaqianjing/xiaopen-mac/releases/latest"><strong>⬇ Download</strong></a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#choose-your-brain">Models &amp; ChatGPT</a> ·
   <a href="#privacy">Privacy</a> ·
@@ -86,15 +86,15 @@ Reminder and volume commands run locally, without a model request. Reminders sur
 
 ### Install and say hello
 
-1. Download [XiaoPen 1.1.1 for Apple Silicon](https://github.com/jiaqianjing/xiaopen-mac/releases/download/v1.1.1/XiaoPen-1.1.1.dmg), open the DMG and drag XiaoPen into **Applications**. [SHA-256 checksums](https://github.com/jiaqianjing/xiaopen-mac/releases/download/v1.1.1/SHA256SUMS) · [Release notes](https://github.com/jiaqianjing/xiaopen-mac/releases/tag/v1.1.1).
-2. **Version 1.1.1 uses Developer ID signing and Apple notarization for both the app and DMG.** Open XiaoPen from Applications. A normal “downloaded from the internet” confirmation may still appear; you do not need developer credentials to install it.
+1. Open the [latest release](https://github.com/jiaqianjing/xiaopen-mac/releases/latest), download its `XiaoPen-x.y.z.dmg`, then open the DMG and drag XiaoPen into **Applications**. [SHA-256 checksums](https://github.com/jiaqianjing/xiaopen-mac/releases/latest/download/SHA256SUMS) · [Release notes](https://github.com/jiaqianjing/xiaopen-mac/releases/latest).
+2. **XiaoPen 1.1.1 introduced Developer ID signing and Apple notarization for the app and DMG.** Open XiaoPen from Applications. A normal “downloaded from the internet” confirmation may still appear; you do not need developer credentials to install it.
 3. Follow the app's onboarding for microphone and speech-recognition permissions. Enable **Mandarin Chinese (China mainland)** dictation in **System Settings → Keyboard → Dictation** so macOS can recognize the wake phrase locally.
 4. [Choose a brain](#choose-your-brain), then select speech recognition in **设置 (Settings) → 通用 (General)**. Cloud recognition uses a Qianwen API key; a missing key or network failure falls back to on-device recognition.
 5. Say **“小喷小喷”**, ask a question and try a follow-up. Check that both the microphone and speaker work as expected.
 
 Gatekeeper checks the downloaded app. Microphone, speech-recognition and Keychain access are separate macOS permissions; signing and notarization do not remove those prompts.
 
-Version 1.1.0 and earlier were not Apple-notarized; the signed, notarized download above is version 1.1.1. The [release verification record](https://github.com/jiaqianjing/xiaopen-mac/releases/download/v1.1.1/verification.json) states the acceptance scope.
+Version 1.1.0 and earlier were not Apple-notarized. For the version you select, read the `verification.json` attached to its release page for the actual signing, notarization and acceptance results. [Latest verification record](https://github.com/jiaqianjing/xiaopen-mac/releases/latest/download/verification.json).
 
 ## Choose your brain
 
@@ -161,6 +161,8 @@ The same sponsorship options are available in the app's **About → 支持小喷
 swift test
 ./scripts/build_app.sh            # Local development package (not notarized)
 ```
+
+Maintainers: [prepare a draft, complete tiered acceptance, then explicitly publish](docs/RELEASING.md#release-workflow). Preparation stops for real manual checks; it does not create test VMs or confirm audibility.
 
 [Development guide](docs/DEVELOPMENT.md) · [Signed release workflow](docs/RELEASING.md) · [Changelog](CHANGELOG.md) · [MIT License](LICENSE)
 
