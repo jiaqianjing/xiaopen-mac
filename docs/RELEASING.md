@@ -138,14 +138,49 @@ spctl --assess --type open --context context:primary-signature --verbose=2 "Xiao
 - [ ] 在另一份干净 VM 快照中，先下载但不打开应用，断网后挂载并安装、首次打开，核对附票据支持离线 Gatekeeper 检查。离线打开验证不代表在线模型或云端语音识别可用。
 - [ ] 新安装首次运行按引导请求麦克风、语音识别权限；拒绝后应有恢复入口，授权后能恢复。正常的钥匙串访问提示与 Gatekeeper 安装放行是不同事项，不要求这些提示全部消失。
 - [ ] 在预装旧版的独立测试环境中升级，核对选择的大脑、唤醒词、设置、提醒、模型文件和已有钥匙串数据按预期保留。旧开发或 ad-hoc 签名切换到 Developer ID 后可能需要重新授权，记录实际结果。
-- [ ] 按本人的明确同意开始麦克风测试：喊唤醒词后停顿，再测试“唤醒词 + 立即提问”、回答及连续追问。确认实际声音和交互；日志与测试通过不能代替听感验收。
-- [ ] 已安装本地 Qwen3-TTS 模型的环境中生成并听到回复，确认已签名 helper 能加载模型、使用 Metal 并正确完成播放。检查系统语音回退和打断行为。
+- [ ] 按本人的明确同意开始麦克风测试：喊唤醒词后停顿，再测试“唤醒词 + 立即提问”、回答及不重复唤醒词的连续追问。确认实际声音和交互；日志与测试通过不能代替听感验收。
+- [ ] 已安装本地 Qwen3-TTS 模型的环境中生成并听到回复，确认已签名 helper 能加载模型、使用 Metal 并正确完成播放。Qwen3-TTS 不会自动回退到系统语音。
+- [ ] 在设置中手动选择系统语音，确认实际播放正常。
+- [ ] 以全局快捷键停止试听后重新播放，确认停止与重播恢复；自然语音打断需另行验收。
 
 ## 5. 发布与状态记录
 
 Release 说明应写清版本、构建号、Developer ID 团队、应用和 DMG 的 Apple `Accepted` 提交 ID、票据/Gatekeeper 验证、最终 SHA-256，以及上面哪些真机或 VM 步骤已完成、哪些仍待确认。不应只写“已签名”，也不应把 Apple 公证通过写成“所有权限无需授权”。
 
-上传完成后重新下载 Release 附件并独立计算 SHA-256，与本地最终文件和 `SHA256SUMS` 一致；再据实际结果更新中英文 README、更新记录和 Issue #7。未完成的验收保持未勾选，Issue 不应仅因新增脚本而标为全部解决。正式公开前核对 Release 指向的提交与构建来源相同。
+上传完成后重新下载 Release 附件并独立计算 SHA-256，与本地最终文件和 `SHA256SUMS` 一致；再据实际结果更新中英文 README、更新记录和 Issue #7。未完成的验收保持未勾选，Issue 不应仅因新增脚本而标为全部解决。正式公开前记录原生构建、打包及最终 Release/tag 的各自提交和差异。后续仅变更测试或文档时，核对实际构建与打包输入未变，并保留差异记录及最终产物 SHA-256；实际输入改变时，重新完成对应构建、公证与验证。
+
+<!-- release-verification:v1.1.1:start -->
+## 1.1.1 发行验证记录
+
+- 发行日期：2026-11-01；构建号：12；团队：`UBS9FUBNFR`。
+- 原生构建源码：`9353aca`；打包源码：`976aac9`。
+- 最终 tag 与提交关系：[v1.1.1](https://github.com/jiaqianjing/xiaopen-mac/releases/tag/v1.1.1)；完整来源及验收记录：[verification.json](https://github.com/jiaqianjing/xiaopen-mac/releases/download/v1.1.1/verification.json)。
+- 应用公证：`055dfa3d-fe79-4cf7-844c-a4c035a5da5f` / `Accepted`；最终 DMG：`d27371ac-833e-417a-8ba5-977400bdcb1c` / `Accepted`。
+- SHA-256：`0af4af5e902643d69e3a3ecd94d5e3c3de05da841507c8d0664ea2783a7b3552`。
+
+- Host 已有使用历史的 Mac：Chrome 下载的最终 DMG 校验一致，Finder 安装及正常首次打开保留 quarantine。用户确认 Qwen3-TTS/Serena 试听清楚，“唤醒后停顿再问”和“唤醒词与问题连续说”两组均成功并听到回复；使用本机识别和本地提醒查询。
+- Guest 全新 Apple Silicon VM 在线首次打开：Safari 下载最终 DMG 与 SHA256SUMS，哈希一致并保留 quarantine，Gatekeeper/SIP 开启。实际安装为 Finder 从挂载 DMG 复制/粘贴到 Applications；失败的远程拖动未计为安装。普通“文件 → 打开”后出现 Apple 已检查、未发现恶意软件的正常确认及真实欢迎界面，未使用上下文菜单“打开”或“仍要打开”。
+- Guest 另一份在首次挂载、安装或评估前复制的干净 VM 分支：隔离外网后，最终已附票据安装包的离线首次普通打开及真实应用界面已验证。该结论只覆盖离线安装放行和启动，不表示在线模型或云端识别离线可用。
+- Guest 权限流程：真实拒绝麦克风与语音识别后，经系统隐私设置恢复，在正常应用中重新检测并读回两项授权均通过；关于页版本为 1.1.1（12）。此项是权限状态验收。
+- Host 真实升级：运行 1.1.0（11）创建未来提醒，再以同一最终 DMG 原位替换为 1.1.1（12）。新版保留并列出非空提醒、旧大脑/模型与 Serena 模型就绪；正常大脑页恢复已有 ChatGPT 登录并通过服务/所选模型检查，无重新登录或凭据输入。测试后恢复日常应用、数据和偏好并移除测试提醒；钥匙串未导出、删除或回滚。
+- Host 用户确认：提醒查询回答后，在追问窗口内不重复唤醒词询问当前音量，成功收到回复。
+- Host 用户确认：在设置中手动选择系统语音后，实际听到正常试听。此项不代表 Qwen3-TTS 自动回退到系统语音。
+- Host 用户确认：全局快捷键 ⌥⌘K 停止试听，随后重播恢复。该结果覆盖快捷键停止与重播，不声称验证了自然语音打断。
+
+| Check | Status |
+| --- | --- |
+| 全新 Apple Silicon VM 在线安装与首次打开 / Fresh Apple Silicon VM online installation and first launch | 已验证 / Verified |
+| 另一份未使用的干净 VM 分支离线首次打开 / Offline first launch on the separate unused clean VM branch | 已验证 / Verified |
+| 真实 1.1.0→1.1.1 升级保留设置与非空提醒 / Actual 1.1.0→1.1.1 upgrade preserving settings and a non-empty reminder | 已验证 / Verified |
+| 正常应用复用已有认证及服务/所选模型检查 / Existing credentials reused by the normal app with service/selected-model check | 已验证 / Verified |
+| 麦克风与语音识别拒绝后的授权恢复 / Microphone and speech-recognition denial/recovery | 已验证 / Verified |
+| 应用读回麦克风与语音识别授权状态 / App readback of microphone and speech-recognition authorization | 已验证 / Verified |
+| 不重复唤醒词的追问及实际回复 / Follow-up without repeating the wake phrase and an actual reply | 已验证 / Verified |
+| 手动选择系统语音后的播放听感确认 / Listener confirmation after manually selecting the system voice | 已验证 / Verified |
+| 全局快捷键停止试听及重播恢复的听感确认 / Listener confirmation of global-shortcut stop and replay recovery | 已验证 / Verified |
+
+Guest VM 无音频设备，未用它验收音频采集、语音识别或播放听感；已通过的Serena 播放、唤醒、追问、系统语音试听听感、快捷键停止/重播听感来自 Host 用户确认。干净环境结果来自 Apple Silicon VM，不声称测试了实体干净 Mac。系统语音由手动选择，Qwen3-TTS 没有自动回退到系统语音；快捷键停止/重播测试不等于自然语音打断验收。正常的互联网下载确认及麦克风、语音识别、钥匙串授权仍可出现。
+<!-- release-verification:v1.1.1:end -->
 
 ## Apple 参考
 

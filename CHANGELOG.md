@@ -1,6 +1,14 @@
 # 更新记录
 
-## 1.1.1 · 待发布
+## 1.1.1 · 2026-11-01
+
+<!-- release-acceptance:v1.1.1:start -->
+### 安装与验证
+- 应用、helper 及 DMG 使用 `UBS9FUBNFR` 团队的 Developer ID 身份；应用/最终 DMG 公证为 `Accepted` / `Accepted`。
+- [安装包](https://github.com/jiaqianjing/xiaopen-mac/releases/download/v1.1.1/XiaoPen-1.1.1.dmg) · [SHA256SUMS](https://github.com/jiaqianjing/xiaopen-mac/releases/download/v1.1.1/SHA256SUMS) · [验证记录](https://github.com/jiaqianjing/xiaopen-mac/releases/download/v1.1.1/verification.json)。
+- 所有明确验收门槛已通过，具体设备范围与局限见验证记录。
+- 干净安装证据来自 Apple Silicon VM；声音与交互听感来自 Host 用户确认。系统语音需手动选择，无自动 Qwen→系统语音回退；本次打断验收只覆盖全局快捷键停止与重播恢复。
+<!-- release-acceptance:v1.1.1:end -->
 
 ### 发行流程
 - 增加正式发行入口：Developer ID Application 签名、Hardened Runtime、安全时间戳、应用及 DMG 的 Apple 公证与票据验证。正式发行遇到缺少凭据、公证或验证失败时终止。
